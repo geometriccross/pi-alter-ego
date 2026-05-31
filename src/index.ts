@@ -1,0 +1,79 @@
+import { buildSessionContext, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { buildContextPrompt, buildSystemPrompt } from "./prompt.js";
+import { renderAlterEgoMessage } from "./renderer.js";
+import { spawnAlterEgo } from "./spawn.js";
+import { createAlterEgoState, filterAlterEgoMessages, isDissentableAssistant } from "./state.js";
+
+export default function alterEgoExtension(pi: ExtensionAPI) {
+  const state = createAlterEgoState();
+
+  const restoreBranchState = (ctx: { sessionManager: { getBranch(): readonly unknown[] } }) => {
+    // getBranch() is leaf→root; createAlterEgoState uses the first matching
+    // toggle so branch-local, latest toggle state wins.
+    state.restoreFromBranch(ctx.sessionManager.getBranch());
+  };
+
+  pi.on("session_start", async (_event, ctx) => {
+    restoreBranchState(ctx);
+  });
+
+  pi.on("session_tree", async (_event, ctx) => {
+    restoreBranchState(ctx);
+  });
+
+  pi.on("agent_end", async (event, ctx) => {
+    if (!ctx.hasUI || !state.isEnabled()) return;
+
+    const lastAssistant = [...(event.messages as any[])].reverse().find((message) => message.role === "assistant");
+    if (!isDissentableAssistant(lastAssistant)) return;
+
+    if (!ctx.model) return;
+    const leafId = ctx.sessionManager.getLeafId();
+    if (!state.markLeafIfNew(leafId)) return;
+
+    const sessionContext = buildSessionContext(ctx.sessionManager.getEntries() as any, leafId);
+    const filteredMessages = filterAlterEgoMessages((sessionContext as any).messages ?? []);
+    const context = buildContextPrompt(filteredMessages as any);
+    const systemPrompt = buildSystemPrompt(ctx.getSystemPrompt());
+    const model = `${ctx.model.provider}/${ctx.model.id}`;
+
+    try {
+      const dissent = await spawnAlterEgo({
+        model,
+        systemPrompt,
+        context,
+        timeout: 30_000,
+        signal: ctx.signal,
+        cwd: ctx.cwd,
+      });
+
+      if (!state.isEnabled()) return;
+      if (ctx.sessionManager.getLeafId() !== leafId) return;
+
+      pi.sendMessage({
+        customType: "alter-ego",
+        content: dissent,
+        display: true,
+        details: { inContext: true },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "反論の生成に失敗しました";
+      ctx.ui.notify(`alter ego: ${message}`, "error");
+    }
+  });
+
+  pi.on("session_shutdown", async () => {
+    state.resetProcessedLeaves();
+  });
+
+  pi.registerCommand("alter-ego", {
+    description: "Alter Ego のオン/オフを切り替える",
+    handler: async (_args, ctx) => {
+      const enabled = state.toggle();
+      pi.appendEntry("alter-ego-toggle", { enabled });
+      ctx.ui.notify(`Alter Ego: ${enabled ? "オン" : "オフ"}`, "info");
+    },
+  });
+
+  pi.registerMessageRenderer("alter-ego", renderAlterEgoMessage);
+}
