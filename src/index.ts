@@ -14,12 +14,19 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
     state.restoreFromBranch(ctx.sessionManager.getBranch());
   };
 
+  const updateStatus = (ctx: { hasUI: boolean; ui: any }) => {
+    if (!ctx.hasUI) return;
+    ctx.ui.setStatus("alter-ego", state.isEnabled() ? "⚠️ Alter Ego: ON" : null);
+  };
+
   pi.on("session_start", async (_event, ctx) => {
     restoreBranchState(ctx);
+    updateStatus(ctx);
   });
 
   pi.on("session_tree", async (_event, ctx) => {
     restoreBranchState(ctx);
+    updateStatus(ctx);
   });
 
   pi.on("agent_end", async (event, ctx) => {
@@ -74,8 +81,9 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
     }
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (_event, ctx) => {
     state.resetProcessedLeaves();
+    if (ctx.hasUI) ctx.ui.setStatus("alter-ego", null);
   });
 
   pi.registerCommand("alter-ego", {
@@ -83,7 +91,8 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       const enabled = state.toggle();
       pi.appendEntry("alter-ego-toggle", { enabled });
-      ctx.ui.notify(`Alter Ego: ${enabled ? "オン" : "オフ"}`, "info");
+      updateStatus(ctx);
+      ctx.ui.notify(`Alter Ego: ${enabled ? "ON" : "OFF"}`, "info");
     },
   });
 

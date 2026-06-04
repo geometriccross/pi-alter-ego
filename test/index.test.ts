@@ -33,7 +33,7 @@ describe("extension wiring", () => {
       cwd: "/tmp/project",
       signal: undefined,
       getSystemPrompt: () => "parent prompt",
-      ui: { notify: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
       sessionManager: {
         getBranch: () => branch,
         getLeafId: () => leafId,
