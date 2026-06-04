@@ -1,34 +1,38 @@
 # pi-alter-ego
 
-pi の拡張機能。メインエージェントの応答に対して別視点からの反論を自動生成し、ユーザーの判断材料とする。
+pi の拡張機能。メインエージェントの思考過程と最終回答のズレを検出し、ユーザーの判断材料とする Reasoning Dissenter。
 
 ## Language
 
 **Alter Ego**:
-メインエージェントの回答に対して反対の立場から意見を提示するエージェント。各プロンプトサイクルの終了後に、セッションの全文脈を受けて独立したプロセスとして起動される。
-_Avoid_: 反対役、devil's advocate、opponent
+メインエージェントの reasoning trace（thinking）と最終回答（final answer）を比較し、両者の間のズレを検出するエージェント。各プロンプトサイクルの終了後に、独立したプロセスとして起動される。
+_Avoid_: reviewer、反対役、devil's advocate、opponent
 
-**反論 (Dissent)**:
-Alter Ego が生成した反対意見。メインエージェントと同じ知識ベースから導かれ、セッションの文脈に自動的に注入される。
-_Avoid_: 異論、オブジェクション
+**Reasoning Dissent**:
+Alter Ego が検出した、思考過程から最終回答への変換における問題点。不確実性の消失、懸念の削除、過剰な断定等。
+_Avoid_: 反論、オブジェクション、レビュー
 
 **Dissentable（反論可能）**:
-Alter Ego が反論を生成する対象となる、メインエージェントの最終的なテキスト応答。ツール呼び出しの中間ターンは含まない。
+Alter Ego が Reasoning Dissent を生成する対象となる、メインエージェントの最終的なテキスト応答。ツール呼び出しの中間ターンは含まない。
 _Avoid_: ターン、応答
+
+**Assistant Trace**:
+メインエージェントの assistant message から抽出された thinking と final answer のペア。Alter Ego の主要な入力。
 
 ## Relationships
 
 - **ユーザー** → **メインエージェント** にプロンプトを送る
-- **メインエージェント** → Dissentable を生成して応答完了
-- **Alter Ego** → セッションの全文脈（過去の Dissent を除く）を受け取り、Dissent を生成
-- **Dissent** → セッションに注入され、以降のメインエージェントの文脈に含まれる
+- **メインエージェント** → Dissentable（thinking + final answer 含む）を生成して応答完了
+- **Alter Ego** → Assistant Trace + compaction summaries を受け取り、Reasoning Dissent を生成
+- **Reasoning Dissent** → セッションに注入され、以降のメインエージェントの文脈に含まれる
 
 ## Example Dialogue
 
 ```
 ユーザー: この関数はこれでリリースしていい？
+メインエージェント thinking: 空文字のケース...でもテスト通ってるから大丈夫か
 メインエージェント: テストも通っているので問題ありません。
-Alter Ego: ⚠️ 空文字列入力時のハンドリングがありません。本番でバリデーション漏れの可能性があります。
+Alter Ego: ⚠️ thinking では「空文字のケース」に触れているが、final answer でその懸念が理由なく消失している。バリデーション漏れの可能性。
 ユーザー: バリデーション追加して
-メインエージェント: （反論を考慮して）空文字列のバリデーションを追加しました。
+メインエージェント: （Reasoning Dissent を考慮して）空文字列のバリデーションを追加しました。
 ```
