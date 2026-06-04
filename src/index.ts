@@ -1,8 +1,9 @@
 import { buildSessionContext, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildContextPrompt, buildSystemPrompt } from "./prompt.js";
+import { buildSystemPrompt, buildUserPrompt } from "./prompt.js";
 import { renderAlterEgoMessage } from "./renderer.js";
 import { spawnAlterEgo } from "./spawn.js";
-import { createAlterEgoState, filterAlterEgoMessages, isDissentableAssistant } from "./state.js";
+import { extractAssistantTrace, extractLastUserText } from "./trace.js";
+import { createAlterEgoState, hasAlterEgoMessage, isDissentableAssistant } from "./state.js";
 
 export default function alterEgoExtension(pi: ExtensionAPI) {
   const state = createAlterEgoState();
@@ -24,7 +25,10 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
   pi.on("agent_end", async (event, ctx) => {
     if (!ctx.hasUI || !state.isEnabled()) return;
 
-    const lastAssistant = [...(event.messages as any[])].reverse().find((message) => message.role === "assistant");
+    const eventMessages = (event.messages as any[]) ?? [];
+    if (hasAlterEgoMessage(eventMessages)) return;
+
+    const lastAssistant = [...eventMessages].reverse().find((message) => message.role === "assistant");
     if (!isDissentableAssistant(lastAssistant)) return;
 
     if (!ctx.model) return;
@@ -32,9 +36,17 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
     if (!state.markLeafIfNew(leafId)) return;
 
     const sessionContext = buildSessionContext(ctx.sessionManager.getEntries() as any, leafId);
-    const filteredMessages = filterAlterEgoMessages((sessionContext as any).messages ?? []);
-    const context = buildContextPrompt(filteredMessages as any);
-    const systemPrompt = buildSystemPrompt(ctx.getSystemPrompt());
+    const compactionSummaries = ((sessionContext as any).messages ?? [])
+      .filter((message: any) => message?.role === "compactionSummary" && typeof message.summary === "string")
+      .map((message: any) => message.summary);
+    const trace = extractAssistantTrace(eventMessages);
+    const context = buildUserPrompt({
+      userMessage: extractLastUserText(eventMessages),
+      assistantThinking: trace.thinking,
+      assistantFinal: trace.text,
+      compactionSummaries,
+    });
+    const systemPrompt = buildSystemPrompt();
     const model = `${ctx.model.provider}/${ctx.model.id}`;
 
     try {
