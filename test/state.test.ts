@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAlterEgoState, filterAlterEgoMessages, isDissentableAssistant } from "../src/state.ts";
+import { createAlterEgoState, hasAlterEgoMessage, isDissentableAssistant } from "../src/state.ts";
 
 describe("extension state helpers", () => {
   it("restores latest toggle from a leaf-to-root branch", () => {
@@ -20,13 +20,19 @@ describe("extension state helpers", () => {
     expect(state.markLeafIfNew("leaf")).toBe(true);
   });
 
-  it("filters prior Alter Ego dissents from context", () => {
-    const messages = filterAlterEgoMessages([
+
+
+  it("detects an Alter Ego message in the current event", () => {
+    expect(hasAlterEgoMessage([
+      { role: "assistant", content: [] },
       { role: "custom", customType: "alter-ego", content: "old" },
+    ] as any)).toBe(true);
+    expect(hasAlterEgoMessage([
+      { role: "assistant", customType: "alter-ego", content: "already in context" },
+    ] as any)).toBe(true);
+    expect(hasAlterEgoMessage([
       { role: "custom", customType: "other", content: "keep" },
-    ] as any);
-    expect(messages).toHaveLength(1);
-    expect((messages[0] as any).customType).toBe("other");
+    ] as any)).toBe(false);
   });
 
   it("recognizes only final assistant messages with text as Dissentable", () => {

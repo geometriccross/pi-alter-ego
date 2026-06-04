@@ -37,9 +37,10 @@ export function createAlterEgoState(): AlterEgoState {
   };
 }
 
-export function filterAlterEgoMessages<T>(messages: readonly T[]): T[] {
-  return messages.filter((msg: any) => !(msg.role === "custom" && msg.customType === "alter-ego"));
+export function hasAlterEgoMessage(messages: readonly unknown[]): boolean {
+  return (messages as any[]).some((msg) => msg?.customType === "alter-ego");
 }
+
 
 export function isDissentableAssistant(message: unknown): boolean {
   const msg = message as any;
