@@ -16,7 +16,7 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
 
   const updateStatus = (ctx: { hasUI: boolean; ui: any }) => {
     if (!ctx.hasUI) return;
-    ctx.ui.setStatus("alter-ego", state.isEnabled() ? "⚠️ Alter Ego: ON" : null);
+    ctx.ui.setStatus("alter-ego", state.isEnabled() ? "⚠️ Alter Ego: ON" : undefined);
   };
 
   pi.on("session_start", async (_event, ctx) => {
@@ -83,7 +83,7 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     state.resetProcessedLeaves();
-    if (ctx.hasUI) ctx.ui.setStatus("alter-ego", null);
+    if (ctx.hasUI) ctx.ui.setStatus("alter-ego", undefined);
   });
 
   pi.registerCommand("alter-ego", {
