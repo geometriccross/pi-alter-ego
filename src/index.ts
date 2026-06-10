@@ -7,6 +7,7 @@ import { createAlterEgoState, hasAlterEgoMessage, isDissentableAssistant } from 
 
 export default function alterEgoExtension(pi: ExtensionAPI) {
   const state = createAlterEgoState();
+  let cachedTheme: any = null;
 
   const restoreBranchState = (ctx: { sessionManager: { getBranch(): readonly unknown[] } }) => {
     // getBranch() is leaf→root; createAlterEgoState uses the first matching
@@ -16,7 +17,14 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
 
   const updateStatus = (ctx: { hasUI: boolean; ui: any }) => {
     if (!ctx.hasUI) return;
-    ctx.ui.setStatus("alter-ego", state.isEnabled() ? "⚠️ Alter Ego: ON" : undefined);
+    if (state.isEnabled()) {
+      const label = cachedTheme
+        ? cachedTheme.fg("thinkingText", "Alter Ego: ON")
+        : "Alter Ego: ON";
+      ctx.ui.setStatus("alter-ego", label);
+    } else {
+      ctx.ui.setStatus("alter-ego", undefined);
+    }
   };
 
   pi.on("session_start", async (_event, ctx) => {
@@ -96,5 +104,8 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerMessageRenderer("alter-ego", renderAlterEgoMessage);
+  pi.registerMessageRenderer("alter-ego", (message: any, options: { expanded?: boolean }, theme: any) => {
+    cachedTheme = theme;
+    return renderAlterEgoMessage(message, options, theme);
+  });
 }
