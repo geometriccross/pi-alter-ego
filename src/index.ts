@@ -72,6 +72,7 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
 
       if (!state.isEnabled()) return;
       if (ctx.sessionManager.getLeafId() !== leafId) return;
+      if (dissent.trim() === "NO_DISSENT") return;
 
       pi.sendMessage({
         customType: "alter-ego",
