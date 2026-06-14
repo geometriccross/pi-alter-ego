@@ -27,15 +27,16 @@ export interface BuildUserPromptOptions {
 }
 
 export function buildUserPrompt(opts: BuildUserPromptOptions): string {
-  const sections = [
-    section("user_message", opts.userMessage),
-    section("assistant_thinking", opts.assistantThinking),
-    section("assistant_final", opts.assistantFinal),
-  ];
+  const sections: string[] = [];
   if (opts.compactionSummaries.length > 0) {
     const summaries = opts.compactionSummaries.map((summary) => `<summary>${escapeXmlSectionText(summary)}</summary>`).join("\n");
     sections.push(`<compaction_summaries>\n${summaries}\n</compaction_summaries>`);
   }
+  sections.push(
+    section("user_message", opts.userMessage),
+    section("assistant_thinking", opts.assistantThinking),
+    section("assistant_final", opts.assistantFinal),
+  );
   return `<reasoning_dissent_input>\n${sections.join("\n\n")}\n</reasoning_dissent_input>`;
 }
 
