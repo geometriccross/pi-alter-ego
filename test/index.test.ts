@@ -44,12 +44,14 @@ describe("extension wiring", () => {
 
     branch = [{ type: "custom", customType: "alter-ego-toggle", data: { enabled: false } }];
     await handlers.session_tree({}, ctx);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("alter-ego", "\x1b[90mAlter Ego: OFF\x1b[39m");
     await handlers.agent_end(event, ctx);
     expect(spawnAlterEgo).not.toHaveBeenCalled();
 
     branch = [{ type: "custom", customType: "alter-ego-toggle", data: { enabled: true } }];
     leafId = "leaf-2";
     await handlers.session_tree({}, ctx);
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("alter-ego", "\x1b[90mAlter Ego: ON\x1b[39m");
     await handlers.agent_end(event, ctx);
 
     expect(spawnAlterEgo).toHaveBeenCalledOnce();

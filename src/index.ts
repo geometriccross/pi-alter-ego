@@ -5,9 +5,12 @@ import { spawnAlterEgo } from "./spawn.js";
 import { extractAssistantTrace, extractLastUserText } from "./trace.js";
 import { createAlterEgoState, hasAlterEgoMessage, isDissentableAssistant } from "./state.js";
 
+function renderStatusText(enabled: boolean): string {
+  return `\x1b[90mAlter Ego: ${enabled ? "ON" : "OFF"}\x1b[39m`;
+}
+
 export default function alterEgoExtension(pi: ExtensionAPI) {
   const state = createAlterEgoState();
-  let cachedTheme: any = null;
 
   const restoreBranchState = (ctx: { sessionManager: { getBranch(): readonly unknown[] } }) => {
     // getBranch() is leaf→root; createAlterEgoState uses the first matching
@@ -17,14 +20,7 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
 
   const updateStatus = (ctx: { hasUI: boolean; ui: any }) => {
     if (!ctx.hasUI) return;
-    if (state.isEnabled()) {
-      const label = cachedTheme
-        ? cachedTheme.fg("thinkingText", "Alter Ego: ON")
-        : "Alter Ego: ON";
-      ctx.ui.setStatus("alter-ego", label);
-    } else {
-      ctx.ui.setStatus("alter-ego", undefined);
-    }
+    ctx.ui.setStatus("alter-ego", renderStatusText(state.isEnabled()));
   };
 
   pi.on("session_start", async (_event, ctx) => {
@@ -104,8 +100,5 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerMessageRenderer("alter-ego", (message: any, options: { expanded?: boolean }, theme: any) => {
-    cachedTheme = theme;
-    return renderAlterEgoMessage(message, options, theme);
-  });
+  pi.registerMessageRenderer("alter-ego", renderAlterEgoMessage);
 }
