@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSystemPrompt, buildUserPrompt } from "../src/prompt.ts";
+import { buildEvidenceDigest, serializeEvidence } from "../src/evidence.ts";
 
 describe("prompt serialization", () => {
 
@@ -23,6 +24,63 @@ describe("prompt serialization", () => {
     expect(prompt).not.toContain("<compaction_summaries>");
   });
 
+  it("places visible_execution_evidence after compaction_summaries and before user_message", () => {
+    const messages = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call-1", toolName: "read", args: { path: "/test.ts" } }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "read",
+        isError: false,
+        content: "Read 10 lines from /test.ts",
+      },
+    ];
+    const evidence = buildEvidenceDigest(messages);
+    const serialized = serializeEvidence(evidence);
+    const prompt = buildUserPrompt({
+      userMessage: "Q",
+      assistantThinking: "T",
+      assistantFinal: "A",
+      compactionSummaries: ["summary"],
+      visibleExecutionEvidence: serialized,
+    });
+
+    // Check ordering: compaction_summaries < visible_execution_evidence < user_message
+    const compactionIdx = prompt.indexOf("<compaction_summaries>");
+    const evidenceIdx = prompt.indexOf("<visible_execution_evidence>");
+    const userMsgIdx = prompt.indexOf("<user_message>");
+
+    expect(compactionIdx).toBeGreaterThan(-1);
+    expect(evidenceIdx).toBeGreaterThan(-1);
+    expect(userMsgIdx).toBeGreaterThan(-1);
+    expect(compactionIdx).toBeLessThan(evidenceIdx);
+    expect(evidenceIdx).toBeLessThan(userMsgIdx);
+  });
+
+  it("omits visible_execution_evidence when empty", () => {
+    const prompt = buildUserPrompt({
+      userMessage: "Q",
+      assistantThinking: "T",
+      assistantFinal: "A",
+      compactionSummaries: [],
+      visibleExecutionEvidence: "",
+    });
+    expect(prompt).not.toContain("<visible_execution_evidence>");
+  });
+
+  it("omits visible_execution_evidence when undefined", () => {
+    const prompt = buildUserPrompt({
+      userMessage: "Q",
+      assistantThinking: "T",
+      assistantFinal: "A",
+      compactionSummaries: [],
+    });
+    expect(prompt).not.toContain("<visible_execution_evidence>");
+  });
+
   it("builds a standalone reasoning dissent system prompt", () => {
     const prompt = buildSystemPrompt();
     expect(prompt).toContain("You are Alter Ego");
@@ -37,6 +95,9 @@ describe("prompt serialization", () => {
     expect(prompt).not.toContain("parent rules");
     expect(prompt).not.toContain("private reasoning trace");
     expect(prompt).toContain("visible traces");
+    expect(prompt).toContain("visible_execution_evidence");
+    expect(prompt).toContain("bounded tool-evidence metadata");
+    expect(prompt).toContain("not proof that the work was correct or sufficient");
   });
 
 });

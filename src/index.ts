@@ -1,4 +1,5 @@
 import { buildSessionContext, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { buildEvidenceDigest, serializeEvidence } from "./evidence.js";
 import { buildSystemPrompt, buildUserPrompt } from "./prompt.js";
 import { renderAlterEgoMessage } from "./renderer.js";
 import { spawnAlterEgo } from "./spawn.js";
@@ -51,11 +52,13 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
       .filter((message: any) => message?.role === "compactionSummary" && typeof message.summary === "string")
       .map((message: any) => message.summary);
     const trace = extractAssistantTrace(eventMessages);
+    const evidence = buildEvidenceDigest(eventMessages);
     const context = buildUserPrompt({
       userMessage: extractLastUserText(eventMessages),
       assistantThinking: trace.thinking,
       assistantFinal: trace.text,
       compactionSummaries,
+      visibleExecutionEvidence: serializeEvidence(evidence),
     });
     const systemPrompt = buildSystemPrompt();
     const model = `${ctx.model.provider}/${ctx.model.id}`;

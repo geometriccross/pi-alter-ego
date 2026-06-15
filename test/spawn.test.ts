@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildEvidenceDigest, serializeEvidence } from "../src/evidence.ts";
 import { buildUserPrompt } from "../src/prompt.ts";
 import { buildAlterEgoArgs, extractFinalAssistantText } from "../src/spawn.ts";
 
@@ -48,5 +49,48 @@ describe("spawn invocation args", () => {
 
     // Compaction summaries are lower priority and should be dropped.
     expect(prompt).not.toContain("<compaction_summaries>");
+  });
+
+  it("preserves core sections over long visible_execution_evidence under truncation", () => {
+    const messages = [];
+    // Create 20 tool calls to generate large evidence
+    for (let i = 1; i <= 20; i++) {
+      messages.push({
+        role: "assistant",
+        content: [{ type: "toolCall", id: `call-${i}`, toolName: "bash", args: { command: `echo test${i}` } }],
+      });
+      messages.push({
+        role: "toolResult",
+        toolCallId: `call-${i}`,
+        toolName: "bash",
+        isError: false,
+        content: "x".repeat(200),
+      });
+    }
+
+    const evidence = buildEvidenceDigest(messages);
+    const serialized = serializeEvidence(evidence);
+
+    const context = buildUserPrompt({
+      userMessage: "hello",
+      assistantThinking: "think",
+      assistantFinal: "answer",
+      compactionSummaries: [],
+      visibleExecutionEvidence: serialized,
+    });
+
+    const args = buildAlterEgoArgs({ model: "m", systemPromptPath: "s", context, maxPromptLength: 300 });
+    const prompt = args.at(-1)!;
+
+    // Core sections must survive tail-preserving truncation.
+    expect(prompt).toContain("<user_message>");
+    expect(prompt).toContain("hello");
+    expect(prompt).toContain("<assistant_thinking>");
+    expect(prompt).toContain("think");
+    expect(prompt).toContain("<assistant_final>");
+    expect(prompt).toContain("answer");
+
+    // Evidence is lower priority and should be dropped.
+    expect(prompt).not.toContain("<visible_execution_evidence>");
   });
 });
