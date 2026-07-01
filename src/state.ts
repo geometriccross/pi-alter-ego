@@ -37,17 +37,8 @@ export function createAlterEgoState(): AlterEgoState {
   };
 }
 
-export function hasAlterEgoMessage(messages: readonly unknown[]): boolean {
-  return (messages as any[]).some((msg) => msg?.customType === "alter-ego");
-}
-
-
-export function isDissentableAssistant(message: unknown): boolean {
-  const msg = message as any;
-  if (msg?.role !== "assistant") return false;
-  if (["toolUse", "error", "aborted"].includes(msg.stopReason)) return false;
-  return Array.isArray(msg.content) && msg.content.some((part: any) => part.type === "text" && part.text.trim().length > 0);
-}
+// ponytail: delegated to extract.ts for single source of truth.
+export { hasAlterEgoMessage, isDissentableAssistant } from "./extract.js";
 
 function isToggleEntry(entry: unknown): entry is { type: "custom"; customType: "alter-ego-toggle"; data: { enabled: boolean } } {
   const value = entry as any;

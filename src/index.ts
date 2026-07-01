@@ -1,11 +1,11 @@
 import { buildSessionContext, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildEvidenceDigest, serializeEvidence } from "./evidence.js";
 import { buildSystemPrompt, buildUserPrompt } from "./prompt.js";
 import { renderAlterEgoMessage } from "./renderer.js";
 import { spawnAlterEgo } from "./spawn.js";
 import { resolveAlterEgoModel } from "./config.js";
-import { extractAssistantTrace, extractLastUserText } from "./trace.js";
-import { createAlterEgoState, hasAlterEgoMessage, isDissentableAssistant } from "./state.js";
+import { serializeEvidence } from "./evidence.js";
+import { createAlterEgoState } from "./state.js";
+import { runDissent, type DissentInput } from "./cycle.js";
 
 function renderStatusText(enabled: boolean): string {
   return `\x1b[90mAlter Ego: ${enabled ? "ON" : "OFF"}\x1b[39m`;
@@ -15,8 +15,6 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
   const state = createAlterEgoState();
 
   const restoreBranchState = (ctx: { sessionManager: { getBranch(): readonly unknown[] } }) => {
-    // getBranch() is leaf→root; createAlterEgoState uses the first matching
-    // toggle so branch-local, latest toggle state wins.
     state.restoreFromBranch(ctx.sessionManager.getBranch());
   };
 
@@ -37,57 +35,47 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
 
   pi.on("agent_end", async (event, ctx) => {
     if (!ctx.hasUI || !state.isEnabled()) return;
-
-    const eventMessages = (event.messages as any[]) ?? [];
-    if (hasAlterEgoMessage(eventMessages)) return;
-
-    const lastAssistant = [...eventMessages].reverse().find((message) => message.role === "assistant");
-    if (!isDissentableAssistant(lastAssistant)) return;
-
     if (!ctx.model) return;
-    const leafId = ctx.sessionManager.getLeafId();
-    if (!state.markLeafIfNew(leafId)) return;
 
+    const leafId = ctx.sessionManager.getLeafId();
+    if (!leafId) return;
     const sessionContext = buildSessionContext(ctx.sessionManager.getEntries() as any, leafId);
-    const compactionSummaries = ((sessionContext as any).messages ?? [])
-      .filter((message: any) => message?.role === "compactionSummary" && typeof message.summary === "string")
-      .map((message: any) => message.summary);
-    const trace = extractAssistantTrace(eventMessages);
-    // Models that never emit a thinking trace (e.g. openai-codex) yield an empty
-    // thinking. Alter ego compares thinking against the final answer, so with no
-    // thinking there is nothing to dissent on — skip silently for such providers.
-    if (!trace.thinking.trim()) return;
-    const evidence = buildEvidenceDigest(eventMessages);
-    const context = buildUserPrompt({
-      userMessage: extractLastUserText(eventMessages),
-      assistantThinking: trace.thinking,
-      assistantFinal: trace.text,
-      compactionSummaries,
-      visibleExecutionEvidence: serializeEvidence(evidence),
-    });
-    const systemPrompt = buildSystemPrompt();
+
     const model = resolveAlterEgoModel(ctx.cwd, getAgentDir(), `${ctx.model.provider}/${ctx.model.id}`);
+    const systemPrompt = buildSystemPrompt();
+
+    const spawn = (input: DissentInput) => {
+      const context = buildUserPrompt({
+        userMessage: input.userText,
+        assistantThinking: input.assistantTrace.thinking,
+        assistantFinal: input.assistantTrace.text,
+        compactionSummaries: input.compactionSummaries,
+        visibleExecutionEvidence: serializeEvidence(input.evidenceDigest),
+      });
+      return spawnAlterEgo({ model, systemPrompt, context, timeout: 30_000, signal: ctx.signal, cwd: ctx.cwd });
+    };
 
     try {
-      const dissent = await spawnAlterEgo({
-        model,
-        systemPrompt,
-        context,
-        timeout: 30_000,
-        signal: ctx.signal,
-        cwd: ctx.cwd,
-      });
+      const dissent = await runDissent(
+        event.messages as any[] ?? [],
+        sessionContext,
+        leafId,
+        {
+          spawn,
+          isEnabled: () => state.isEnabled(),
+          markLeafIfNew: (id) => state.markLeafIfNew(id),
+          getCurrentLeafId: () => ctx.sessionManager.getLeafId(),
+        },
+      );
 
-      if (!state.isEnabled()) return;
-      if (ctx.sessionManager.getLeafId() !== leafId) return;
-      if (dissent.trim() === "NO_DISSENT") return;
-
-      pi.sendMessage({
-        customType: "alter-ego",
-        content: dissent,
-        display: true,
-        details: { inContext: true },
-      });
+      if (dissent !== null) {
+        pi.sendMessage({
+          customType: "alter-ego",
+          content: dissent,
+          display: true,
+          details: { inContext: true },
+        });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "反論の生成に失敗しました";
       ctx.ui.notify(`alter ego: ${message}`, "error");
