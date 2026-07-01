@@ -52,6 +52,10 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
       .filter((message: any) => message?.role === "compactionSummary" && typeof message.summary === "string")
       .map((message: any) => message.summary);
     const trace = extractAssistantTrace(eventMessages);
+    // Models that never emit a thinking trace (e.g. openai-codex) yield an empty
+    // thinking. Alter ego compares thinking against the final answer, so with no
+    // thinking there is nothing to dissent on — skip silently for such providers.
+    if (!trace.thinking.trim()) return;
     const evidence = buildEvidenceDigest(eventMessages);
     const context = buildUserPrompt({
       userMessage: extractLastUserText(eventMessages),

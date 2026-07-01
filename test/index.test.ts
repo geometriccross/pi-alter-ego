@@ -44,7 +44,7 @@ describe("extension wiring", () => {
         getEntries: () => entries,
       },
     };
-    const event = { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Yes." }] }] };
+    const event = { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "thinking", thinking: "理由を考える。" }, { type: "text", text: "Yes." }] }] };
 
     branch = [{ type: "custom", customType: "alter-ego-toggle", data: { enabled: false } }];
     await handlers.session_tree({}, ctx);
@@ -96,7 +96,7 @@ describe("extension wiring", () => {
         getEntries: () => entries,
       },
     };
-    const event = { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "こんにちは。" }] }] };
+    const event = { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "thinking", thinking: "理由を考える。" }, { type: "text", text: "こんにちは。" }] }] };
 
     await handlers.session_start({}, ctx);
     await handlers.agent_end(event, ctx);
@@ -140,6 +140,7 @@ describe("extension wiring", () => {
           role: "assistant",
           stopReason: "stop",
           content: [
+            { type: "thinking", thinking: "理由を考える。" },
             { type: "toolCall", id: "call-1", name: "read", arguments: { path: "/test.ts" } },
             { type: "text", text: "Done." },
           ],
@@ -162,5 +163,43 @@ describe("extension wiring", () => {
     expect(callArgs.context).toContain("<visible_execution_evidence>");
     expect(callArgs.context).toContain("read");
     expect(callArgs.context).toContain("/test.ts");
+  });
+
+  it("skips alter ego when the assistant emitted no thinking trace", async () => {
+    const handlers: Record<string, Function> = {};
+    const pi = {
+      on: vi.fn((event: string, handler: Function) => { handlers[event] = handler; }),
+      registerCommand: vi.fn(),
+      registerMessageRenderer: vi.fn(),
+      appendEntry: vi.fn(),
+      sendMessage: vi.fn(),
+    };
+
+    const { default: alterEgoExtension } = await import("../src/index.ts");
+    alterEgoExtension(pi as any);
+
+    const entries = [
+      { type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "Done?" } },
+      { type: "message", id: "leaf-1", parentId: "u1", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done." }] } },
+    ];
+    const ctx = {
+      hasUI: true,
+      model: { provider: "provider", id: "model" },
+      cwd: "/tmp/project",
+      signal: undefined,
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+      sessionManager: {
+        getBranch: () => [],
+        getLeafId: () => "leaf-1",
+        getEntries: () => entries,
+      },
+    };
+    const event = { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done." }] }] };
+
+    await handlers.session_start({}, ctx);
+    await handlers.agent_end(event, ctx);
+
+    expect(spawnAlterEgo).not.toHaveBeenCalled();
+    expect(pi.sendMessage).not.toHaveBeenCalled();
   });
 });
