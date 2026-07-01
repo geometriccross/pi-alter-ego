@@ -5,10 +5,21 @@
 ```
 pi-alter-ego/
 ├── index.ts          # エントリーポイント
+├── config.ts         # モデル設定解決（プロジェクト > グローバル > fallback）
 ├── spawn.ts          # 子プロセス管理
 ├── renderer.ts       # メッセージレンダラー
 └── prompt.ts         # 反論指示プロンプト + コンテキストシリアライズ
 ```
+
+### モデル設定
+
+Alter Ego が使用するモデルは以下の優先順位で解決される：
+
+1. **プロジェクト設定**: `<cwd>/.pi/alter-ego.json`（`{"model": "provider/model-id"}`）
+2. **グローバル設定**: `~/.pi/agent/alter-ego.json`
+3. **フォールバック**: メインエージェントと同じモデル
+
+設定ファイルが存在しない・JSON パースエラー・`model` キー不在の場合は次のソースへフォールバックする。
 
 ## index.ts
 

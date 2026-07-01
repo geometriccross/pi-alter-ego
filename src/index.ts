@@ -1,8 +1,9 @@
-import { buildSessionContext, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { buildSessionContext, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildEvidenceDigest, serializeEvidence } from "./evidence.js";
 import { buildSystemPrompt, buildUserPrompt } from "./prompt.js";
 import { renderAlterEgoMessage } from "./renderer.js";
 import { spawnAlterEgo } from "./spawn.js";
+import { resolveAlterEgoModel } from "./config.js";
 import { extractAssistantTrace, extractLastUserText } from "./trace.js";
 import { createAlterEgoState, hasAlterEgoMessage, isDissentableAssistant } from "./state.js";
 
@@ -65,7 +66,7 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
       visibleExecutionEvidence: serializeEvidence(evidence),
     });
     const systemPrompt = buildSystemPrompt();
-    const model = `${ctx.model.provider}/${ctx.model.id}`;
+    const model = resolveAlterEgoModel(ctx.cwd, getAgentDir(), `${ctx.model.provider}/${ctx.model.id}`);
 
     try {
       const dissent = await spawnAlterEgo({
