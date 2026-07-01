@@ -6,6 +6,7 @@
 pi-alter-ego/src/
 ├── index.ts          # エントリーポイント — thin adapter
 ├── extract.ts        # pi メッセージ形状の知識を一箇所に集約
+├── xml.ts            # XML エスケープ（テキスト内容・属性値）を一箇所に集約
 ├── cycle.ts          # Reasoning Dissent サイクル全体（deep module）
 ├── state.ts          # ランタイム状態（toggle / processedLeaves）
 ├── config.ts         # モデル設定解決（プロジェクト > グローバル > fallback）
@@ -22,6 +23,8 @@ pi-alter-ego/src/
 2つの deep module がコアロジックを隠蔽する:
 
 1. **`extract.ts`** — pi の `messages: any[]` を型付きデータに変換。`any` キャストをこのモジュールの内側に封じ、下流は型付き値だけを消費する。
+
+2. **`xml.ts`** — XML 出力の正しさを保証するエスケープ関数を一箇所に集約。`escapeXmlSectionText`（要素本文用: `&` `<` `>`）と `escapeXmlAttr`（属性値用: `&` `"` `<` `>`）を提供。両者は同じ関心事だが意味が異なる（text vs attribute）。
    - `extractAssistantTrace` / `extractTraceFromAssistant` — thinking + text 抽出
    - `extractLastUserText` — 最後の user テキスト
    - `hasAlterEgoMessage` / `isDissentableAssistant` — 事前ガード
@@ -29,7 +32,7 @@ pi-alter-ego/src/
    - `extractCompactionSummaries` — コンパクション要約抽出
    - `buildEvidenceDigest` / `serializeEvidence` (evidence.ts から re-export)
 
-2. **`cycle.ts`** — Reasoning Dissent サイクル全体。1インターフェース (`runDissent`) の背後に全判断を隠す。
+3. **`cycle.ts`** — Reasoning Dissent サイクル全体。1インターフェース (`runDissent`) の背後に全判断を隠す。
    - 入力: `messages` + `sessionContext` + `leafId` + `DissentDeps`
    - `DissentDeps.spawn` は adapter がプリビルドしたクロージャ（モデル解決・プロンプト構築済み）
    - 出力: dissent 文字列 (`string | null`)

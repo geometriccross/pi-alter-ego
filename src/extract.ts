@@ -51,12 +51,6 @@ function extractText(content: unknown): string {
   return "";
 }
 
-// ─── XML escaping ────────────────────────────────────────────────────
-
-export function escapeXmlSectionText(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 // ─── Message checks ──────────────────────────────────────────────────
 
 export function hasAlterEgoMessage(messages: readonly unknown[]): boolean {

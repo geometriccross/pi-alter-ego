@@ -1,4 +1,4 @@
-import { escapeXmlSectionText } from "./trace.js";
+import { escapeXmlSectionText } from "./xml.js";
 
 export function buildSystemPrompt(): string {
   return `# Alter Ego Directive

@@ -1,4 +1,4 @@
-import { escapeXmlSectionText } from "./trace.js";
+import { escapeXmlAttr, escapeXmlSectionText } from "./xml.js";
 
 /** Maximum number of evidence items kept in the digest (latest wins). */
 export const MAX_EVIDENCE_ITEMS = 12;
@@ -471,6 +471,4 @@ function truncate(text: string, maxLength: number): string {
   return text.slice(0, maxLength - 1) + "…";
 }
 
-function escapeXmlAttr(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+
