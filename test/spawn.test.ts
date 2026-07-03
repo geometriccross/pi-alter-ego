@@ -13,6 +13,115 @@ describe("JSONL extraction", () => {
     ].join("\n");
     expect(extractFinalAssistantText(jsonl)).toBe("final");
   });
+
+  it("returns null when no valid message_end exists", () => {
+    const jsonl = [
+      JSON.stringify({ type: "session", version: 3 }),
+      JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "hello" }] } }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBeNull();
+  });
+
+  it("handles string content on assistant messages", () => {
+    const jsonl = [
+      JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: "plain string response" } }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBe("plain string response");
+  });
+
+  it("handles content with no text blocks (thinking-only response)", () => {
+    const jsonl = [
+      JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "thinking", thinking: "thought" }] } }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBeNull();
+  });
+
+  it("falls back to agent_end when no message_end has valid text", () => {
+    const jsonl = [
+      JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "error", content: [] } }),
+      JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "q" }] },
+          { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "NO_DISSENT" }] },
+        ],
+      }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBe("NO_DISSENT");
+  });
+
+  it("prefers message_end over agent_end when both are present", () => {
+    const jsonl = [
+      JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "from message_end" }] } }),
+      JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "from agent_end" }] },
+        ],
+      }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBe("from message_end");
+  });
+
+  it("skips aborted messages in agent_end fallback", () => {
+    const jsonl = [
+      JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "assistant", stopReason: "aborted", content: [{ type: "text", text: "nope" }] },
+        ],
+      }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBeNull();
+  });
+
+  it("returns last assistant text from agent_end when multiple messages present", () => {
+    const jsonl = [
+      JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: "hello" },
+          { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "first" }] },
+          { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "second" }] },
+        ],
+      }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBe("second");
+  });
+
+  it("handles empty content array", () => {
+    const jsonl = [
+      JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [] } }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBeNull();
+  });
+
+  it("handles whitespace-only text", () => {
+    const jsonl = [
+      JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "   " }] } }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBeNull();
+  });
+
+  it("joins multiple text blocks in one message", () => {
+    const jsonl = [
+      JSON.stringify({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "hello" }, { type: "text", text: " world" }] } }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBe("hello world");
+  });
+
+  it("ignores non-assistant roles in agent_end", () => {
+    const jsonl = [
+      JSON.stringify({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: "q" },
+          { role: "toolResult", content: "result" },
+        ],
+      }),
+    ].join("\n");
+    expect(extractFinalAssistantText(jsonl)).toBeNull();
+  });
 });
 
 describe("spawn invocation args", () => {

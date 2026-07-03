@@ -66,29 +66,64 @@ export function getPiInvocation(args: string[]): { command: string; args: string
 }
 
 export function extractFinalAssistantText(jsonl: string): string | null {
+  // Primary: scan message_end events (streaming providers emit these reliably).
   let lastAssistantText = "";
 
   for (const line of jsonl.split("\n")) {
     if (!line.trim()) continue;
-    try {
-      const event = JSON.parse(line);
-      if (
-        event.type === "message_end" &&
-        event.message?.role === "assistant" &&
-        event.message.stopReason !== "error" &&
-        event.message.stopReason !== "aborted"
-      ) {
-        const text = Array.isArray(event.message.content)
-          ? event.message.content.filter((p: any) => p.type === "text").map((p: any) => p.text).join("")
-          : "";
-        if (text.trim()) lastAssistantText = text;
-      }
-    } catch {
-      // Ignore non-JSON log lines.
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+
+    if (
+      event.type === "message_end" &&
+      event.message?.role === "assistant" &&
+      event.message.stopReason !== "error" &&
+      event.message.stopReason !== "aborted"
+    ) {
+      const text = extractMessageText(event.message);
+      if (text) lastAssistantText = text;
     }
   }
 
-  return lastAssistantText || null;
+  if (lastAssistantText) return lastAssistantText;
+
+  // Fallback: agent_end carries the complete messages array including the final
+  // assistant message. Some providers / error paths may omit a clean message_end.
+  for (const line of jsonl.split("\n")) {
+    if (!line.trim()) continue;
+    let event: any;
+    try { event = JSON.parse(line); } catch { continue; }
+
+    if (event.type === "agent_end" && Array.isArray(event.messages)) {
+      // Walk backwards through messages to find the last assistant response.
+      for (let i = event.messages.length - 1; i >= 0; i--) {
+        const msg = event.messages[i];
+        if (
+          msg?.role === "assistant" &&
+          msg.stopReason !== "error" &&
+          msg.stopReason !== "aborted"
+        ) {
+          const text = extractMessageText(msg);
+          if (text) return text;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/** Extract visible text from an assistant message payload, handling both
+ *  array-of-blocks and plain-string content shapes. */
+function extractMessageText(message: any): string {
+  const content = message?.content;
+  if (typeof content === "string") return content.trim() || "";
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((p: any) => p.type === "text" && typeof p.text === "string")
+    .map((p: any) => p.text)
+    .join("")
+    .trim();
 }
 
 function truncatePromptArg(context: string, maxPromptLength: number): string {
