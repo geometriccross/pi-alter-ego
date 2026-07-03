@@ -98,6 +98,7 @@ describe("prompt serialization", () => {
     expect(prompt).toContain("visible_execution_evidence");
     expect(prompt).toContain("bounded tool-evidence metadata");
     expect(prompt).toContain("not proof that the work was correct or sufficient");
+    expect(prompt).toContain("self-contained revised answer");
   });
 
 });
