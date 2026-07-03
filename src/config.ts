@@ -7,7 +7,10 @@ const CONFIG_FILE = "alter-ego.json";
 
 export interface AlterEgoSettings {
   model?: string;
+  timeout?: number; // seconds, > 0
 }
+
+export const DEFAULT_TIMEOUT_SECONDS = 90;
 
 function readModel(configPath: string): string | null {
   try {
@@ -26,6 +29,39 @@ function readModel(configPath: string): string | null {
     // Missing file, bad JSON, or wrong shape → silently skip.
   }
   return null;
+}
+
+function readTimeout(configPath: string): number | null {
+  try {
+    const raw = fs.readFileSync(configPath, "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "timeout" in parsed &&
+      typeof (parsed as AlterEgoSettings).timeout === "number" &&
+      Number.isFinite((parsed as AlterEgoSettings).timeout!) &&
+      (parsed as AlterEgoSettings).timeout! > 0
+    ) {
+      return (parsed as AlterEgoSettings).timeout!;
+    }
+  } catch {
+    // Missing file, bad JSON, or wrong shape → silently skip.
+  }
+  return null;
+}
+
+export function resolveAlterEgoTimeout(
+  projectCwd: string,
+  agentDir: string,
+): number {
+  const timeout = readTimeout(path.join(projectCwd, CONFIG_DIR, CONFIG_FILE));
+  if (timeout !== null) return timeout;
+
+  const globalTimeout = readTimeout(path.join(agentDir, CONFIG_FILE));
+  if (globalTimeout !== null) return globalTimeout;
+
+  return DEFAULT_TIMEOUT_SECONDS;
 }
 
 export function resolveAlterEgoModel(

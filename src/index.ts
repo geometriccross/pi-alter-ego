@@ -2,7 +2,7 @@ import { buildSessionContext, getAgentDir, type ExtensionAPI } from "@earendil-w
 import { buildSystemPrompt, buildUserPrompt } from "./prompt.js";
 import { renderAlterEgoMessage } from "./renderer.js";
 import { spawnAlterEgo } from "./spawn.js";
-import { resolveAlterEgoModel } from "./config.js";
+import { resolveAlterEgoModel, resolveAlterEgoTimeout } from "./config.js";
 import { serializeEvidence } from "./evidence.js";
 import { createAlterEgoState } from "./state.js";
 import { runDissent, type DissentInput } from "./cycle.js";
@@ -52,7 +52,8 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
         compactionSummaries: input.compactionSummaries,
         visibleExecutionEvidence: serializeEvidence(input.evidenceDigest),
       });
-      return spawnAlterEgo({ model, systemPrompt, context, timeout: 30_000, signal: ctx.signal, cwd: ctx.cwd });
+      const timeout = resolveAlterEgoTimeout(ctx.cwd, getAgentDir()) * 1000;
+      return spawnAlterEgo({ model, systemPrompt, context, timeout, signal: ctx.signal, cwd: ctx.cwd });
     };
 
     try {
