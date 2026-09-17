@@ -7,7 +7,6 @@
   "files": ["src", "docs", "CONTEXT.md"],
   "scripts": {
     "test": "vitest run",
-    "test:live": "TYPESAFE_LIVE_TEST=1 vitest run test/jev.live.test.ts",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "check": "tsc --noEmit && vitest run",

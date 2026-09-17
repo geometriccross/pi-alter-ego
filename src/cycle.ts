@@ -1,9 +1,22 @@
-import { extractAssistantTrace, extractCompactionSummaries, extractLastUserText, findLastAssistant, hasAlterEgoAfterAssistant, isDissentableAssistant } from "./extract.js";
-import { buildEvidenceDigest } from "./evidence.js";
-import type { DissentAssessment, DissentInput } from "./assessment.js";
+import {
+  extractAssistantTrace,
+  extractCompactionSummaries,
+  extractLastUserText,
+  findLastAssistant,
+  hasAlterEgoAfterAssistant,
+  isDissentableAssistant,
+  type AssistantTrace,
+} from "./extract.js";
+import type { JevResponse } from "./jev.js";
+
+export interface DissentInput {
+  userText: string;
+  assistantTrace: AssistantTrace;
+  compactionSummaries: string[];
+}
 
 export interface DissentDeps {
-  evaluate: (input: DissentInput) => Promise<DissentAssessment>;
+  evaluate: (input: DissentInput) => Promise<JevResponse>;
   claimLeaf: (leafId: string) => (() => void) | null;
   isCurrent: () => boolean;
 }
@@ -13,31 +26,37 @@ export async function runDissent(
   sessionContext: unknown,
   leafId: string,
   deps: DissentDeps,
-): Promise<DissentAssessment | null> {
-  if (!deps.isCurrent() || hasAlterEgoAfterAssistant(messages)) return null;
-  if (!isDissentableAssistant(findLastAssistant(messages))) return null;
+): Promise<JevResponse | null> {
+  if (!deps.isCurrent() || hasAlterEgoAfterAssistant(messages)) {
+    return null;
+  }
+  if (!isDissentableAssistant(findLastAssistant(messages))) {
+    return null;
+  }
 
   const assistantTrace = extractAssistantTrace(messages);
-  const evidenceDigest = buildEvidenceDigest(messages);
-  // No visible basis for a comparison. Missing thinking alone is never evidence of a failure.
-  if (!assistantTrace.thinking.trim() && evidenceDigest.length === 0) return null;
   const release = deps.claimLeaf(leafId);
-  if (!release) return null;
+  if (!release) {
+    return null;
+  }
+
   try {
-    const assessment = await deps.evaluate({
+    const response = await deps.evaluate({
       userText: extractLastUserText(messages),
       assistantTrace,
-      evidenceDigest,
       compactionSummaries: extractCompactionSummaries(sessionContext),
     });
+
     if (!deps.isCurrent()) {
       release();
       return null;
     }
-    return assessment;
+    return response;
   } catch (error) {
     release();
-    if (!deps.isCurrent()) return null;
+    if (!deps.isCurrent()) {
+      return null;
+    }
     throw error;
   }
 }

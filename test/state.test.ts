@@ -41,13 +41,28 @@ describe("branch-local state", () => {
 
   it("restores only evaluated leaves from this branch, including quiet clear results", () => {
     const manager = SessionManager.inMemory();
-    manager.appendCustomEntry("alter-ego-assessment", { sourceLeafId: "clear", assessment: { version: 1 } });
-    manager.appendCustomMessageEntry("alter-ego", "dissent", true, { sourceLeafId: "dissent", assessment: { version: 1 } });
-    manager.appendCustomMessageEntry("alter-ego", "legacy", true, { sourceLeafId: "legacy" });
+    manager.appendCustomEntry("alter-ego-assessment", {
+      sourceLeafId: "clear",
+      assessment: { version: 1 },
+    });
+    manager.appendCustomMessageEntry("alter-ego", "dissent", true, {
+      sourceLeafId: "dissent",
+      assessment: { version: 1 },
+    });
+    manager.appendCustomMessageEntry("alter-ego", "raw answers", true, {
+      sourceLeafId: "current",
+      response: {
+        answers: { custom: { type: "noul", noul: 0.5 } },
+      },
+    });
+    manager.appendCustomMessageEntry("alter-ego", "legacy", true, {
+      sourceLeafId: "legacy",
+    });
     const state = createAlterEgoState();
     state.restoreFromBranch(manager.getBranch());
     expect(state.claimLeaf("clear")).toBeNull();
     expect(state.claimLeaf("dissent")).toBeNull();
+    expect(state.claimLeaf("current")).toBeNull();
     expect(state.claimLeaf("legacy")).not.toBeNull();
     state.restoreFromBranch([]);
     expect(state.claimLeaf("clear")).not.toBeNull();
