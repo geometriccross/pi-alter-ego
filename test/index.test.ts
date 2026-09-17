@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { getEventListeners } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import alterEgoExtension from "../src/index.js";
@@ -383,6 +384,27 @@ describe("extension -> Jev -> session integration", () => {
     await env.handlers.session_tree({}, env.ctx);
     await env.run();
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("skips an already aborted run, cleans up listeners, and permits retry", async () => {
+    const fetchImpl = respond();
+    const env = setup();
+    const aborted = new AbortController();
+    aborted.abort();
+    env.ctx.signal = aborted.signal;
+
+    await env.run();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(env.pi.sendMessage).not.toHaveBeenCalled();
+    expect(env.ctx.ui.notify).not.toHaveBeenCalled();
+    expect(getEventListeners(aborted.signal, "abort")).toEqual([]);
+
+    const retry = new AbortController();
+    env.ctx.signal = retry.signal;
+    await env.run();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(env.pi.sendMessage).toHaveBeenCalledOnce();
+    expect(getEventListeners(retry.signal, "abort")).toEqual([]);
   });
 
   it("deduplicates requests already in flight", async () => {

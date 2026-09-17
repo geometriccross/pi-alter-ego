@@ -1,62 +1,33 @@
-import {
-  extractAssistantTrace,
-  extractCompactionSummaries,
-  extractLastUserText,
-  findLastAssistant,
-  hasAlterEgoAfterAssistant,
-  isDissentableAssistant,
-  type AssistantTrace,
-} from "./extract.js";
-import type { JevResponse } from "./jev.js";
-
-export interface DissentInput {
-  userText: string;
-  assistantTrace: AssistantTrace;
-  compactionSummaries: string[];
-}
+import type { JevRequest, JevResponse } from "./jev.js";
+import { ok, recoverAsync, type Result } from "./result.js";
 
 export interface DissentDeps {
-  evaluate: (input: DissentInput) => Promise<JevResponse>;
+  evaluate: (request: JevRequest) => Promise<Result<JevResponse>>;
   claimLeaf: (leafId: string) => (() => void) | null;
   isCurrent: () => boolean;
 }
 
 export async function runDissent(
-  messages: readonly unknown[],
-  sessionContext: unknown,
+  request: JevRequest | null,
   leafId: string,
   deps: DissentDeps,
-): Promise<JevResponse | null> {
-  if (!deps.isCurrent() || hasAlterEgoAfterAssistant(messages)) {
-    return null;
-  }
-  if (!isDissentableAssistant(findLastAssistant(messages))) {
-    return null;
+): Promise<Result<JevResponse | null>> {
+  if (request === null || !deps.isCurrent()) {
+    return ok(null);
   }
 
-  const assistantTrace = extractAssistantTrace(messages);
   const release = deps.claimLeaf(leafId);
   if (!release) {
-    return null;
+    return ok(null);
   }
 
-  try {
-    const response = await deps.evaluate({
-      userText: extractLastUserText(messages),
-      assistantTrace,
-      compactionSummaries: extractCompactionSummaries(sessionContext),
-    });
-
-    if (!deps.isCurrent()) {
-      release();
-      return null;
-    }
-    return response;
-  } catch (error) {
+  const result = await recoverAsync(
+    () => deps.evaluate(request),
+    () => "Jev評価に失敗しました",
+  );
+  const current = deps.isCurrent();
+  if (!result.ok || !current) {
     release();
-    if (!deps.isCurrent()) {
-      return null;
-    }
-    throw error;
   }
+  return current ? result : ok(null);
 }

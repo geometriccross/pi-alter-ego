@@ -1,7 +1,9 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { attempt, err, ok, recoverAsync, type Result } from "./result.js";
 
 export const JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const TIMEOUT_MS = 30_000;
+const UNAVAILABLE = "Jevとの通信または応答形式に問題があります（未評価）";
 
 type JsonValue =
   | string
@@ -76,16 +78,19 @@ export async function askJev(
   request: JevRequest,
   options: JevOptions,
   fetchImpl: typeof fetch = globalThis.fetch,
-): Promise<JevResponse> {
-  if (!options.apiKey?.trim()) {
-    throw new Error("TYPESAFE_API_KEY を設定してください（Jev未評価）");
+): Promise<Result<JevResponse>> {
+  const apiKey = options.apiKey?.trim();
+  if (!apiKey) {
+    return err("TYPESAFE_API_KEY を設定してください（Jev未評価）");
   }
 
-  const body = JSON.stringify({
-    model: "jev-latest",
-    state: request.state,
-    questions: request.questions,
-  });
+  const body = attempt(
+    () => JSON.stringify({ model: "jev-latest", state: request.state, questions: request.questions }),
+    () => UNAVAILABLE,
+  );
+  if (!body.ok) {
+    return body;
+  }
 
   const controller = new AbortController();
   const onAbort = () => controller.abort();
@@ -95,21 +100,26 @@ export async function askJev(
   }
 
   let timedOut = false;
+  const abortMessage = () => timedOut
+    ? `Jev タイムアウト (${TIMEOUT_MS / 1000}s、未評価)`
+    : "Jev評価をキャンセルしました";
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
   }, TIMEOUT_MS);
 
-  try {
+  return recoverAsync(async () => {
     for (let attempt = 0; ; attempt++) {
-      controller.signal.throwIfAborted();
+      if (controller.signal.aborted) {
+        return err(abortMessage());
+      }
       const response = await fetchImpl(JEV_ENDPOINT, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${options.apiKey.trim()}`,
+          Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body,
+        body: body.value,
         signal: controller.signal,
         redirect: "error",
       });
@@ -133,166 +143,140 @@ export async function askJev(
       if (!response.ok) {
         await response.body?.cancel();
         // Service bodies may echo state or credentials. Do not expose them in notifications.
-        throw new JevServiceError(`Jev API: HTTP ${response.status}（未評価）`);
+        return err(controller.signal.aborted ? abortMessage() : `Jev API: HTTP ${response.status}（未評価）`);
       }
 
       const payload: unknown = await response.json();
-      controller.signal.throwIfAborted();
-      return parseResponse(payload, request.questions);
+      return controller.signal.aborted
+        ? err(abortMessage())
+        : parseResponse(payload, request.questions);
     }
-  } catch (error) {
-    if (controller.signal.aborted) {
-      if (timedOut) {
-        throw new Error(`Jev タイムアウト (${TIMEOUT_MS / 1000}s、未評価)`);
-      }
-      throw new Error("Jev評価をキャンセルしました", { cause: error });
-    }
-    if (error instanceof JevServiceError) {
-      throw error;
-    }
-    throw new Error("Jevとの通信または応答形式に問題があります（未評価）");
-  } finally {
+  }, () => controller.signal.aborted ? abortMessage() : UNAVAILABLE).finally(() => {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", onAbort);
-  }
+  });
 }
 
-class JevServiceError extends Error {}
-
-function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Invalid object");
-  }
-  return value as Record<string, unknown>;
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function probability(value: unknown): number {
+function isProbability(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function isTokenCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function parseProbabilities(
+  raw: unknown,
+  options: readonly string[],
+): Result<Record<string, number>> {
+  if (!isObject(raw) || Object.keys(raw).length !== options.length) {
+    return err(UNAVAILABLE);
+  }
+
+  const entries: [string, number][] = [];
+  for (const key of options) {
+    const value = raw[key];
+    if (!isProbability(value)) {
+      return err(UNAVAILABLE);
+    }
+    entries.push([key, value]);
+  }
+  const total = entries.reduce((sum, [, value]) => sum + value, 0);
+  return Math.abs(total - 1) > 0.001 ? err(UNAVAILABLE) : ok(Object.fromEntries(entries));
+}
+
+function parseLegend(raw: unknown, options: readonly string[]): Result<ScoreAnswer["legend"]> {
+  if (!isObject(raw) || Object.keys(raw).length !== options.length) {
+    return err(UNAVAILABLE);
+  }
+
+  const entries: [string, JevDescription][] = [];
+  for (const key of options) {
+    const description = raw[key];
+    if (description !== null && typeof description !== "string" && typeof description !== "object") {
+      return err(UNAVAILABLE);
+    }
+    entries.push([key, description as JevDescription]);
+  }
+  return ok(Object.fromEntries(entries));
+}
+
+function parseAnswer(raw: unknown, question: JevQuestion): Result<JevResponse["answers"][string]> {
+  if (!isObject(raw) || !isObject(question) || raw.type !== question.type) {
+    return err(UNAVAILABLE);
+  }
+  if (question.type === "noul") {
+    return isProbability(raw.noul) ? ok({ type: "noul", noul: raw.noul }) : err(UNAVAILABLE);
+  }
   if (
-    typeof value !== "number" ||
-    !Number.isFinite(value) ||
-    value < 0 ||
-    value > 1
+    (question.type !== "choice" && question.type !== "score") ||
+    (question.type === "choice" && !isObject(question.criteria)) ||
+    (question.type === "score" && !Array.isArray(question.criteria)) ||
+    !isProbability(raw.confidence)
   ) {
-    throw new Error("Invalid probability");
+    return err(UNAVAILABLE);
   }
-  return value;
+
+  const options = question.type === "score"
+    ? question.criteria.map((_, index) => String(index))
+    : Object.keys(question.criteria);
+  const distribution = parseProbabilities(raw.probabilities, options);
+  if (!distribution.ok) {
+    return distribution;
+  }
+  const probabilities = distribution.value;
+  const confidence = raw.confidence;
+
+  if (question.type === "choice") {
+    if (
+      typeof raw.choice !== "string" ||
+      !Object.hasOwn(question.criteria, raw.choice) ||
+      probabilities[raw.choice] < Math.max(...Object.values(probabilities))
+    ) {
+      return err(UNAVAILABLE);
+    }
+    return ok({ type: "choice", choice: raw.choice, confidence, probabilities });
+  }
+
+  if (
+    typeof raw.score !== "number" || !Number.isFinite(raw.score) ||
+    raw.score < 0 || raw.score > options.length - 1
+  ) {
+    return err(UNAVAILABLE);
+  }
+  const legend = parseLegend(raw.legend, options);
+  return legend.ok
+    ? ok({ type: "score", score: raw.score, legend: legend.value, confidence, probabilities })
+    : legend;
 }
 
-function tokenCount(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new Error("Invalid usage");
-  }
-  return value;
-}
-
-function parseResponse(
-  payload: unknown,
-  questions: Record<string, JevQuestion>,
-): JevResponse {
-  const root = object(payload);
-  if (typeof root.model !== "string" || !/^jev-[\w.-]+$/.test(root.model)) {
-    throw new Error("Invalid model");
+function parseResponse(payload: unknown, questions: JevRequest["questions"]): Result<JevResponse> {
+  if (
+    !isObject(payload) || typeof payload.model !== "string" || !/^jev-[\w.-]+$/.test(payload.model) ||
+    !isObject(payload.answers) || !isObject(payload.usage) || !isObject(questions) ||
+    !isTokenCount(payload.usage.input_tokens) || !isTokenCount(payload.usage.output_tokens)
+  ) {
+    return err(UNAVAILABLE);
   }
 
-  const rawAnswers = object(root.answers);
   const answers: JevResponse["answers"] = Object.create(null);
-
   for (const [id, question] of Object.entries(questions)) {
-    const answer = object(rawAnswers[id]);
-    if (answer.type !== question.type) {
-      throw new Error("Wrong answer type");
+    const answer = parseAnswer(payload.answers[id], question);
+    if (!answer.ok) {
+      return answer;
     }
-
-    if (question.type === "noul") {
-      answers[id] = { type: "noul", noul: probability(answer.noul) };
-      continue;
-    }
-
-    const rawProbabilities = object(answer.probabilities);
-    const options =
-      question.type === "score"
-        ? question.criteria.map((_, index) => String(index))
-        : Object.keys(question.criteria);
-
-    if (Object.keys(rawProbabilities).length !== options.length) {
-      throw new Error("Incomplete distribution");
-    }
-
-    const probabilities = Object.fromEntries(
-      options.map((key) => [key, probability(rawProbabilities[key])]),
-    );
-    const values = Object.values(probabilities);
-    const totalProbability = values.reduce((sum, p) => sum + p, 0);
-
-    if (Math.abs(totalProbability - 1) > 0.001) {
-      throw new Error("Invalid distribution");
-    }
-
-    const confidence = probability(answer.confidence);
-
-    if (question.type === "choice") {
-      if (
-        typeof answer.choice !== "string" ||
-        !Object.hasOwn(question.criteria, answer.choice)
-      ) {
-        throw new Error("Unknown choice");
-      }
-      if (probabilities[answer.choice] < Math.max(...values)) {
-        throw new Error("Choice is not the most probable option");
-      }
-
-      answers[id] = {
-        type: "choice",
-        choice: answer.choice,
-        confidence,
-        probabilities,
-      };
-    } else {
-      if (
-        typeof answer.score !== "number" ||
-        !Number.isFinite(answer.score) ||
-        answer.score < 0 ||
-        answer.score > options.length - 1
-      ) {
-        throw new Error("Invalid score");
-      }
-
-      const rawLegend = object(answer.legend);
-      if (Object.keys(rawLegend).length !== options.length) {
-        throw new Error("Incomplete legend");
-      }
-
-      const legend = Object.fromEntries(
-        options.map((key) => {
-          const description = rawLegend[key];
-          if (
-            description !== null &&
-            typeof description !== "string" &&
-            typeof description !== "object"
-          ) {
-            throw new Error("Invalid legend");
-          }
-          return [key, description as JevDescription];
-        }),
-      );
-
-      answers[id] = {
-        type: "score",
-        score: answer.score,
-        legend,
-        confidence,
-        probabilities,
-      };
-    }
+    answers[id] = answer.value;
   }
-
-  const usage = object(root.usage);
-  return {
-    model: root.model,
+  return ok({
+    model: payload.model,
     answers,
     usage: {
-      input_tokens: tokenCount(usage.input_tokens),
-      output_tokens: tokenCount(usage.output_tokens),
+      input_tokens: payload.usage.input_tokens,
+      output_tokens: payload.usage.output_tokens,
     },
-  };
+  });
 }

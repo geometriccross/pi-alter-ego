@@ -1,13 +1,35 @@
-import {
-  buildSessionContext,
-  type ExtensionAPI,
-  type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { askJev } from "./jev.js";
 import { renderAlterEgoMessage } from "./renderer.js";
 import { createAlterEgoState } from "./state.js";
 import { runDissent } from "./cycle.js";
 import { loadConfig } from "./config.js";
+import { andThen, andThenAsync, ok, recoverAsync } from "./result.js";
+import {
+  buildDissentMessage,
+  findDissentSource,
+  formatDissentError,
+  prepareDissentRequest,
+} from "./dissent.js";
+
+function trackPending(pending: Set<AbortController>, signal?: AbortSignal) {
+  const controller = new AbortController();
+  pending.add(controller);
+
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) {
+    controller.abort();
+  }
+
+  return {
+    signal: controller.signal,
+    dispose() {
+      signal?.removeEventListener("abort", onAbort);
+      pending.delete(controller);
+    },
+  };
+}
 
 export default function alterEgoExtension(pi: ExtensionAPI) {
   const state = createAlterEgoState();
@@ -41,69 +63,38 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
       return;
     }
 
-    const leafId = ctx.sessionManager.getLeafId();
-    const sourceEntry = [...ctx.sessionManager.getBranch()]
-      .reverse()
-      .find((entry) => entry.type === "message" && entry.message.role === "assistant");
-
-    if (!leafId || !sourceEntry) {
+    const source = findDissentSource(ctx.sessionManager.getLeafId(), ctx.sessionManager.getBranch());
+    if (!source) {
       return;
     }
 
-    const sourceLeafId = sourceEntry.id;
-    const controller = new AbortController();
-    pending.add(controller);
-
-    const onAbort = () => controller.abort();
-    const signal = ctx.signal;
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) {
-      controller.abort();
-    }
-
+    const evaluation = trackPending(pending, ctx.signal);
     const isCurrent = () =>
-      !controller.signal.aborted &&
+      !evaluation.signal.aborted &&
       state.isEnabled() &&
-      ctx.sessionManager.getLeafId() === leafId;
+      ctx.sessionManager.getLeafId() === source.leafId;
 
-    try {
-      const { questions, apiKey } = loadConfig(ctx.cwd);
-      if (Object.keys(questions).length === 0) {
-        return;
-      }
-
-      const sessionContext = buildSessionContext(ctx.sessionManager.getEntries(), leafId);
-      const response = await runDissent(event.messages ?? [], sessionContext, sourceLeafId, {
-        evaluate: (input) =>
-          askJev(
-            { state: input, questions },
-            {
-              apiKey,
-              signal: controller.signal,
-            },
-          ),
-        claimLeaf: (id) => state.claimLeaf(id),
-        isCurrent,
+    const result = await recoverAsync(async () => {
+      const response = await andThenAsync(loadConfig(ctx.cwd), ({ questions, apiKey }) => {
+        const request = prepareDissentRequest(
+          event.messages ?? [], ctx.sessionManager.getEntries(), source.leafId, questions,
+        );
+        return runDissent(request, source.sourceLeafId, {
+          evaluate: (request) => askJev(request, { apiKey, signal: evaluation.signal }),
+          claimLeaf: (id) => state.claimLeaf(id),
+          isCurrent,
+        });
       });
-
-      if (response === null || !isCurrent()) {
-        return;
-      }
-
-      pi.sendMessage({
-        customType: "alter-ego",
-        content: JSON.stringify(response.answers, null, 2),
-        display: true,
-        details: { sourceLeafId, response },
+      return andThen(response, (value) => {
+        if (value !== null && isCurrent()) {
+          pi.sendMessage(buildDissentMessage(source.sourceLeafId, value));
+        }
+        return ok(undefined);
       });
-    } catch (error) {
-      if (isCurrent()) {
-        const message = error instanceof Error ? error.message : "Jev評価に失敗しました";
-        ctx.ui.notify(`alter ego: ${message}`, "error");
-      }
-    } finally {
-      signal?.removeEventListener("abort", onAbort);
-      pending.delete(controller);
+    }, () => "Jev評価に失敗しました").finally(evaluation.dispose);
+
+    if (!result.ok && isCurrent()) {
+      ctx.ui.notify(formatDissentError(result.error), "error");
     }
   });
 

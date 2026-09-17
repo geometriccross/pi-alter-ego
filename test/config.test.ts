@@ -55,20 +55,20 @@ function setup() {
 
 describe("Alter Ego configuration", () => {
   it("has no built-in questions or credentials", () => {
-    expect(setup().load()).toEqual({ questions: {}, apiKey: undefined });
+    expect(setup().load()).toEqual({ ok: true, value: { questions: {}, apiKey: undefined } });
   });
 
   it("uses a project's questions as a whole, without adding global questions or defaults", () => {
     const config = setup();
     config.global({ questions: sampleQuestions });
-    expect(config.load().questions).toEqual(sampleQuestions);
+    expect(config.load()).toMatchObject({ ok: true, value: { questions: sampleQuestions } });
     const questions = {
       custom_check: { type: "noul", instructions: "A custom question" },
     };
     config.project({ questions });
-    expect(config.load().questions).toEqual(questions);
+    expect(config.load()).toEqual({ ok: true, value: { questions, apiKey: undefined } });
     config.project({ questions: {} });
-    expect(config.load().questions).toEqual({});
+    expect(config.load()).toEqual({ ok: true, value: { questions: {}, apiKey: undefined } });
   });
 
   it("passes arbitrary IDs, all primitive types, and structured JSON through unchanged", () => {
@@ -83,7 +83,7 @@ describe("Alter Ego configuration", () => {
       },
     };
     config.project({ questions });
-    expect(config.load().questions).toEqual(questions);
+    expect(config.load()).toEqual({ ok: true, value: { questions, apiKey: undefined } });
   });
 
   it("leaves question validation to TypeSafe rather than imposing an application schema", () => {
@@ -95,37 +95,53 @@ describe("Alter Ego configuration", () => {
       },
     };
     config.project({ questions });
-    expect(config.load().questions).toEqual(questions);
+    expect(config.load()).toEqual({ ok: true, value: { questions, apiKey: undefined } });
   });
 
   it("reloads file and environment changes and ignores unrelated settings", () => {
     const config = setup();
     config.project({ model: "old-model", timeout: 0, apiKey: "ignored-file-key" });
-    expect(config.load()).toEqual({ questions: {}, apiKey: undefined });
+    expect(config.load()).toEqual({ ok: true, value: { questions: {}, apiKey: undefined } });
     vi.stubEnv("TYPESAFE_API_KEY", "first-key");
     config.project({ model: "other", state: "ignored", questions: sampleQuestions });
-    expect(config.load()).toEqual({ questions: sampleQuestions, apiKey: "first-key" });
+    expect(config.load()).toEqual({ ok: true, value: { questions: sampleQuestions, apiKey: "first-key" } });
     vi.stubEnv("TYPESAFE_API_KEY", "updated-key");
     config.project({ questions: {} });
-    expect(config.load()).toEqual({ questions: {}, apiKey: "updated-key" });
+    expect(config.load()).toEqual({ ok: true, value: { questions: {}, apiKey: "updated-key" } });
     vi.stubEnv("TYPESAFE_API_KEY", undefined);
-    expect(config.load()).toEqual({ questions: {}, apiKey: undefined });
+    expect(config.load()).toEqual({ ok: true, value: { questions: {}, apiKey: undefined } });
   });
 
   it("does not read an overridden global file", () => {
     const config = setup();
     writeFileSync(config.globalPath, "{bad JSON");
     config.project({ questions: sampleQuestions });
-    expect(config.load().questions).toEqual(sampleQuestions);
+    expect(config.load()).toMatchObject({ ok: true, value: { questions: sampleQuestions } });
   });
 
-  it("reports malformed JSON and unreadable files without using another configuration", () => {
+  it("returns malformed JSON and file read failures without using another configuration", () => {
     const config = setup();
     config.global({ questions: sampleQuestions });
     writeFileSync(config.projectPath, "{invalid JSON");
-    expect(config.load).toThrow(`${config.projectPath}: JSONが不正です（未評価）`);
+    expect(config.load()).toEqual({ ok: false, error: `${config.projectPath}: JSONが不正です（未評価）` });
     rmSync(config.projectPath);
     mkdirSync(config.projectPath);
-    expect(config.load).toThrow("質問設定を読み取れません");
+    expect(config.load()).toEqual({
+      ok: false,
+      error: `${config.projectPath}: 質問設定を読み取れません（未評価）`,
+    });
   });
+
+  it.each([{ value: null }, { value: [] }, { value: false }, { value: "legacy" }])(
+    "returns a failure for a non-object configuration: $value",
+    ({ value }) => {
+      const config = setup();
+      config.global({ questions: sampleQuestions });
+      config.project(value);
+      expect(config.load()).toEqual({
+        ok: false,
+        error: `${config.projectPath}: 設定はJSONオブジェクトで指定してください（未評価）`,
+      });
+    },
+  );
 });
