@@ -1,5 +1,3 @@
-import { escapeXmlAttr, escapeXmlSectionText } from "./xml.js";
-
 /** Maximum number of evidence items kept in the digest (latest wins). */
 export const MAX_EVIDENCE_ITEMS = 12;
 
@@ -135,21 +133,6 @@ export function buildEvidenceDigest(messages: readonly unknown[]): EvidenceItem[
     summary: summarize(call, result),
     isError: result.isError,
   }));
-}
-
-/**
- * Serialize evidence items into an XML section string.
- * Returns empty string when items is empty.
- */
-export function serializeEvidence(items: readonly EvidenceItem[]): string {
-  if (items.length === 0) return "";
-  const entries = items
-    .map(
-      (item, idx) =>
-        `<item index="${idx}" tool="${escapeXmlAttr(item.toolName)}" isError="${item.isError}">${escapeXmlSectionText(item.summary)}</item>`,
-    )
-    .join("\n");
-  return `<visible_execution_evidence>\n${entries}\n</visible_execution_evidence>`;
 }
 
 // ─── internals ───────────────────────────────────────────────────────

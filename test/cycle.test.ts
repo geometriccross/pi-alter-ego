@@ -1,128 +1,78 @@
 import { describe, expect, it, vi } from "vitest";
 import { runDissent, type DissentDeps } from "../src/cycle.js";
+import type { DissentAssessment } from "../src/assessment.js";
+import { createAlterEgoState } from "../src/state.js";
 
-function makeDeps(overrides?: Partial<DissentDeps>): DissentDeps {
-  return {
-    spawn: vi.fn().mockResolvedValue("counterpoint"),
-    isEnabled: () => true,
-    markLeafIfNew: () => true,
-    getCurrentLeafId: () => "leaf-1",
-    ...overrides,
-  };
-}
-
+const assessment: DissentAssessment = { version: 1, outcome: "clear", language: "en", model: "jev-test", checks: [], policy: { threshold: 0.85, quoteConfidence: 0.5 }, usage: { input_tokens: 1, output_tokens: 1 } };
 const basicMessages = [
   { role: "user", content: "Ship it?" },
-  { role: "assistant", stopReason: "stop", content: [
-    { type: "thinking", thinking: "考え中。" },
-    { type: "text", text: "Ship it." },
-  ] },
+  { role: "assistant", stopReason: "stop", content: [{ type: "thinking", thinking: "Not verified." }, { type: "text", text: "Ship it." }] },
 ];
+function makeDeps(overrides: Partial<DissentDeps> = {}): DissentDeps {
+  const state = createAlterEgoState();
+  return { evaluate: vi.fn().mockResolvedValue(assessment), isCurrent: () => true, claimLeaf: state.claimLeaf, ...overrides };
+}
 
-describe("runDissent", () => {
-  // ── Tracer Bullet 1 ──
-  it("returns dissent when spawn succeeds", async () => {
-    const deps = makeDeps({ spawn: vi.fn().mockResolvedValue("counterpoint") });
-    const result = await runDissent(basicMessages, {}, "leaf-1", deps);
-
-    expect(result).toBe("counterpoint");
-    expect(deps.spawn).toHaveBeenCalledOnce();
-  });
-
-  // ── Tracer Bullet 2 ──
-  it("returns null when spawn returns NO_DISSENT", async () => {
-    const deps = makeDeps({ spawn: vi.fn().mockResolvedValue("NO_DISSENT") });
-    const result = await runDissent(basicMessages, {}, "leaf-1", deps);
-
-    expect(result).toBeNull();
-    expect(deps.spawn).toHaveBeenCalledOnce();
-  });
-
-  // ── Tracer Bullet 3 ──
-  it("returns null without spawning when assistant has no thinking trace", async () => {
-    const messages = [
-      { role: "user", content: "Done?" },
-      { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Done." }] },
-    ];
+describe("dissent cycle", () => {
+  it("returns a typed assessment and supplies context with current-run evidence", async () => {
     const deps = makeDeps();
-    const result = await runDissent(messages, {}, "leaf-1", deps);
-
-    expect(result).toBeNull();
-    expect(deps.spawn).not.toHaveBeenCalled();
-  });
-
-  // ── Tracer Bullet 4 ──
-  it("returns null when assistant is not dissentable (toolUse stopReason)", async () => {
-    const messages = [
-      { role: "user", content: "Check" },
-      { role: "assistant", stopReason: "toolUse", content: [
-        { type: "thinking", thinking: "理由" },
-        { type: "text", text: "text" },
-        { type: "toolCall", id: "1", name: "read" },
-      ] },
-    ];
-    const deps = makeDeps();
-    const result = await runDissent(messages, {}, "leaf-1", deps);
-
-    expect(result).toBeNull();
-    expect(deps.spawn).not.toHaveBeenCalled();
-  });
-
-  // ── Tracer Bullet 5 ──
-  it("returns null when alter-ego message already exists in the batch", async () => {
-    const messages = [
-      { role: "user", content: "Ship?" },
-      { customType: "alter-ego", content: "previous" },
-      { role: "assistant", stopReason: "stop", content: [
-        { type: "thinking", thinking: "考え" },
-        { type: "text", text: "Yes." },
-      ] },
-    ];
-    const deps = makeDeps();
-    const result = await runDissent(messages, {}, "leaf-1", deps);
-
-    expect(result).toBeNull();
-    expect(deps.spawn).not.toHaveBeenCalled();
-  });
-
-  // ── Tracer Bullet 6 ──
-  it("returns null when leaf was already processed (duplicate)", async () => {
-    const deps = makeDeps({ markLeafIfNew: () => false });
-    const result = await runDissent(basicMessages, {}, "leaf-1", deps);
-
-    expect(result).toBeNull();
-    expect(deps.spawn).not.toHaveBeenCalled();
-  });
-
-  // ── Tracer Bullet 7 ──
-  it("returns null when state was toggled off while spawn was running", async () => {
-    let enabled = true;
-    const deps = makeDeps({
-      spawn: vi.fn().mockImplementation(async () => {
-        enabled = false; // simulate toggle-off during spawn
-        return "counterpoint";
-      }),
-      isEnabled: () => enabled,
+    expect(await runDissent(basicMessages, { messages: [{ role: "compactionSummary", summary: "Earlier work" }] }, "leaf", deps)).toBe(assessment);
+    expect(deps.evaluate).toHaveBeenCalledWith({
+      userText: "Ship it?", assistantTrace: { thinking: "Not verified.", text: "Ship it." }, evidenceDigest: [], compactionSummaries: ["Earlier work"],
     });
-    const result = await runDissent(basicMessages, {}, "leaf-1", deps);
-
-    expect(result).toBeNull();
-    expect(deps.spawn).toHaveBeenCalledOnce();
   });
-
-  // ── Tracer Bullet 8 ──
-  it("returns null when leaf changed while spawn was running (race)", async () => {
-    let leafId = "leaf-1";
-    const deps = makeDeps({
-      spawn: vi.fn().mockImplementation(async () => {
-        leafId = "leaf-2"; // simulate navigation during spawn
-        return "counterpoint";
-      }),
-      getCurrentLeafId: () => leafId,
-    });
-    const result = await runDissent(basicMessages, {}, "leaf-1", deps);
-
-    expect(result).toBeNull();
-    expect(deps.spawn).toHaveBeenCalledOnce();
+  it("skips when neither thinking nor execution evidence is visible", async () => {
+    const deps = makeDeps();
+    expect(await runDissent([{ role: "assistant", stopReason: "stop", content: "Done." }], {}, "leaf", deps)).toBeNull();
+    expect(deps.evaluate).not.toHaveBeenCalled();
+  });
+  it("compares a no-thinking final against earlier tool-turn thinking and tool results", async () => {
+    const deps = makeDeps();
+    const messages = [
+      { role: "assistant", stopReason: "toolUse", content: [{ type: "thinking", thinking: "Need tests." }, { type: "toolCall", id: "c1", name: "bash", arguments: { command: "npm test" } }] },
+      { role: "toolResult", toolCallId: "c1", toolName: "bash", isError: true, content: "Tests 1 failed (1)" },
+      { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Passed." }] },
+    ];
+    await runDissent(messages, {}, "leaf", deps);
+    expect(deps.evaluate).toHaveBeenCalledWith(expect.objectContaining({
+      assistantTrace: { thinking: "Need tests.", text: "Passed." },
+      evidenceDigest: [{ toolName: "bash", summary: "bash test → 1 test failed", isError: true }],
+    }));
+    const withoutThinking = messages.slice(1);
+    expect(await runDissent(withoutThinking, {}, "leaf2", deps)).toBe(assessment);
+  });
+  it.each(["toolUse", "error", "aborted", "pending"])("skips %s final messages", async (stopReason) => {
+    const deps = makeDeps();
+    expect(await runDissent([{ ...basicMessages[1], stopReason }], {}, "leaf", deps)).toBeNull();
+    expect(deps.evaluate).not.toHaveBeenCalled();
+  });
+  it("does not suppress a new answer merely because older Alter Ego feedback is in the run", async () => {
+    const deps = makeDeps();
+    const old = { role: "custom", customType: "alter-ego", content: "old" };
+    expect(await runDissent([old, ...basicMessages], {}, "leaf", deps)).toBe(assessment);
+    expect(await runDissent([...basicMessages, old], {}, "other", deps)).toBeNull();
+    expect(deps.evaluate).toHaveBeenCalledOnce();
+  });
+  it("deduplicates concurrent and completed evaluations of a source leaf", async () => {
+    const deps = makeDeps();
+    const first = runDissent(basicMessages, {}, "leaf", deps);
+    expect(await runDissent(basicMessages, {}, "leaf", deps)).toBeNull();
+    await first;
+    expect(await runDissent(basicMessages, {}, "leaf", deps)).toBeNull();
+    expect(deps.evaluate).toHaveBeenCalledOnce();
+  });
+  it("releases a failed leaf so a later attempt can retry", async () => {
+    const evaluate = vi.fn().mockRejectedValueOnce(new Error("unavailable")).mockResolvedValueOnce(assessment);
+    const deps = makeDeps({ evaluate });
+    await expect(runDissent(basicMessages, {}, "leaf", deps)).rejects.toThrow("unavailable");
+    expect(await runDissent(basicMessages, {}, "leaf", deps)).toBe(assessment);
+  });
+  it.each([false, true])("discards a stale result (error=%s) and releases its claim", async (fail) => {
+    let current = true;
+    const evaluate = vi.fn(async () => { current = false; if (fail) throw new Error("stale"); return assessment; });
+    const deps = makeDeps({ evaluate, isCurrent: () => current });
+    expect(await runDissent(basicMessages, {}, "leaf", deps)).toBeNull();
+    current = true;
+    expect(deps.claimLeaf("leaf")).not.toBeNull();
   });
 });

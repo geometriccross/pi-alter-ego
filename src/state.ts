@@ -2,23 +2,29 @@ export interface AlterEgoState {
   isEnabled(): boolean;
   restoreFromBranch(branch: readonly unknown[]): void;
   toggle(): boolean;
-  markLeafIfNew(leafId: string | null | undefined): boolean;
+  claimLeaf(leafId: string): (() => void) | null;
   resetProcessedLeaves(): void;
 }
 
 export function createAlterEgoState(): AlterEgoState {
   let enabled = true;
-  const processedLeaves = new Set<string>();
+  const processedLeaves = new Map<string, symbol>();
 
   return {
     isEnabled: () => enabled,
     restoreFromBranch(branch) {
       enabled = true;
       processedLeaves.clear();
-      for (const entry of branch) {
-        if (isToggleEntry(entry)) {
+      // SessionManager.getBranch() is ordered root -> leaf.
+      for (const raw of branch) {
+        const entry = raw as { type?: string; customType?: string; data?: any; details?: any } | null;
+        if (entry?.type === "custom" && entry.customType === "alter-ego-toggle" && typeof entry.data?.enabled === "boolean") {
           enabled = entry.data.enabled;
-          break;
+        }
+        const result = entry?.type === "custom" && entry.customType === "alter-ego-assessment" ? entry.data
+          : entry?.type === "custom_message" && entry.customType === "alter-ego" ? entry.details : undefined;
+        if (typeof result?.sourceLeafId === "string" && result?.assessment?.version === 1) {
+          processedLeaves.set(result.sourceLeafId, Symbol());
         }
       }
     },
@@ -26,21 +32,17 @@ export function createAlterEgoState(): AlterEgoState {
       enabled = !enabled;
       return enabled;
     },
-    markLeafIfNew(leafId) {
-      if (!leafId || processedLeaves.has(leafId)) return false;
-      processedLeaves.add(leafId);
-      return true;
+    claimLeaf(leafId) {
+      if (!leafId || processedLeaves.has(leafId)) return null;
+      const token = Symbol();
+      processedLeaves.set(leafId, token);
+      // A cancelled old request must not release a newer claim after tree navigation/reload.
+      return () => {
+        if (processedLeaves.get(leafId) === token) processedLeaves.delete(leafId);
+      };
     },
     resetProcessedLeaves() {
       processedLeaves.clear();
     },
   };
-}
-
-// ponytail: delegated to extract.ts for single source of truth.
-export { hasAlterEgoMessage, isDissentableAssistant } from "./extract.js";
-
-function isToggleEntry(entry: unknown): entry is { type: "custom"; customType: "alter-ego-toggle"; data: { enabled: boolean } } {
-  const value = entry as any;
-  return value?.type === "custom" && value.customType === "alter-ego-toggle" && typeof value.data?.enabled === "boolean";
 }

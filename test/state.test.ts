@@ -1,45 +1,55 @@
 import { describe, expect, it } from "vitest";
-import { createAlterEgoState, hasAlterEgoMessage, isDissentableAssistant } from "../src/state.ts";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAlterEgoState } from "../src/state.js";
 
-describe("extension state helpers", () => {
-  it("restores latest toggle from a leaf-to-root branch", () => {
+describe("branch-local state", () => {
+  it("restores the latest toggle using the real SessionManager branch order", () => {
+    const manager = SessionManager.inMemory();
+    manager.appendCustomEntry("alter-ego-toggle", { enabled: false });
+    const off = manager.getLeafId()!;
+    manager.appendCustomEntry("alter-ego-toggle", { enabled: true });
     const state = createAlterEgoState();
-    state.restoreFromBranch([
-      { type: "custom", customType: "alter-ego-toggle", data: { enabled: false } },
-      { type: "custom", customType: "alter-ego-toggle", data: { enabled: true } },
-    ] as any);
+    state.restoreFromBranch(manager.getBranch());
+    expect(state.isEnabled()).toBe(true);
+    manager.branch(off);
+    state.restoreFromBranch(manager.getBranch());
     expect(state.isEnabled()).toBe(false);
+    state.restoreFromBranch([]);
+    expect(state.isEnabled()).toBe(true);
   });
 
-  it("toggles, deduplicates leaves, and resets processed leaves", () => {
+  it("toggles and allows releasing unsuccessful claims", () => {
     const state = createAlterEgoState();
     expect(state.toggle()).toBe(false);
-    expect(state.markLeafIfNew("leaf")).toBe(true);
-    expect(state.markLeafIfNew("leaf")).toBe(false);
+    expect(state.claimLeaf("")).toBeNull();
+    const release = state.claimLeaf("leaf")!;
+    expect(state.claimLeaf("leaf")).toBeNull();
+    release();
+    expect(state.claimLeaf("leaf")).not.toBeNull();
     state.resetProcessedLeaves();
-    expect(state.markLeafIfNew("leaf")).toBe(true);
+    expect(state.claimLeaf("leaf")).not.toBeNull();
   });
 
-
-
-  it("detects an Alter Ego message in the current event", () => {
-    expect(hasAlterEgoMessage([
-      { role: "assistant", content: [] },
-      { role: "custom", customType: "alter-ego", content: "old" },
-    ] as any)).toBe(true);
-    expect(hasAlterEgoMessage([
-      { role: "assistant", customType: "alter-ego", content: "already in context" },
-    ] as any)).toBe(true);
-    expect(hasAlterEgoMessage([
-      { role: "custom", customType: "other", content: "keep" },
-    ] as any)).toBe(false);
+  it("a late cancellation cannot release a newer claim", () => {
+    const state = createAlterEgoState();
+    const oldRelease = state.claimLeaf("leaf")!;
+    state.restoreFromBranch([]);
+    state.claimLeaf("leaf");
+    oldRelease();
+    expect(state.claimLeaf("leaf")).toBeNull();
   });
 
-  it("recognizes only final assistant messages with text as Dissentable", () => {
-    expect(isDissentableAssistant({ role: "assistant", stopReason: "stop", content: [{ type: "text", text: " ok " }] } as any)).toBe(true);
-    expect(isDissentableAssistant({ role: "assistant", stopReason: "length", content: [{ type: "text", text: "partial" }] } as any)).toBe(true);
-    expect(isDissentableAssistant({ role: "assistant", stopReason: "toolUse", content: [{ type: "text", text: "intermediate" }, { type: "toolCall" }] } as any)).toBe(false);
-    expect(isDissentableAssistant({ role: "assistant", stopReason: "error", content: [{ type: "text", text: "bad" }] } as any)).toBe(false);
-    expect(isDissentableAssistant({ role: "assistant", stopReason: "stop", content: [{ type: "toolCall" }] } as any)).toBe(false);
+  it("restores only evaluated leaves from this branch, including quiet clear results", () => {
+    const manager = SessionManager.inMemory();
+    manager.appendCustomEntry("alter-ego-assessment", { sourceLeafId: "clear", assessment: { version: 1 } });
+    manager.appendCustomMessageEntry("alter-ego", "dissent", true, { sourceLeafId: "dissent", assessment: { version: 1 } });
+    manager.appendCustomMessageEntry("alter-ego", "legacy", true, { sourceLeafId: "legacy" });
+    const state = createAlterEgoState();
+    state.restoreFromBranch(manager.getBranch());
+    expect(state.claimLeaf("clear")).toBeNull();
+    expect(state.claimLeaf("dissent")).toBeNull();
+    expect(state.claimLeaf("legacy")).not.toBeNull();
+    state.restoreFromBranch([]);
+    expect(state.claimLeaf("clear")).not.toBeNull();
   });
 });

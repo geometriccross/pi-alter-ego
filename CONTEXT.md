@@ -1,38 +1,29 @@
 # pi-alter-ego
 
-pi の拡張機能。メインエージェントの思考過程と最終回答のズレを検出し、ユーザーの判断材料とする Reasoning Dissenter。
+メインエージェントの可視の思考・実行証跡と最終回答のズレを示し、ユーザーの判断を補助する Reasoning Dissenter。
 
 ## Language
 
 **Alter Ego**:
-メインエージェントの reasoning trace（thinking）と最終回答（final answer）を比較し、両者の間のズレを検出するエージェント。各プロンプトサイクルの終了後に、独立したプロセスとして起動される。
+最終回答が、可視の根拠に反する主張をしたり、重要な留保を落としたりしていないかを判定する補助機能。独立したコードレビューや、最終回答の正しさの保証ではない。
 _Avoid_: reviewer、反対役、devil's advocate、opponent
 
 **Reasoning Dissent**:
-Alter Ego が検出した、思考過程から最終回答への変換における問題点。不確実性の消失、懸念の削除、過剰な断定等。
-_Avoid_: 反論、オブジェクション、レビュー
+最終回答との矛盾、未解決の懸念・条件の脱落、過剰な断定についての指摘。可視の根拠の引用と、それに対する判断を区別する。
+_Avoid_: 反論、レビュー、検証済みの欠陥
 
-**Dissentable（反論可能）**:
-Alter Ego が Reasoning Dissent を生成する対象となる、メインエージェントの最終的なテキスト応答。ツール呼び出しの中間ターンは含まない。
-_Avoid_: ターン、応答
+**Dissentable**:
+Reasoning Dissent の対象となる、メインエージェントの最終的なテキスト応答。ツール呼び出しの中間応答や、中止・失敗した応答は含まない。
+_Avoid_: ターン、任意のメッセージ
 
 **Assistant Trace**:
-メインエージェントの assistant message から抽出された thinking と final answer のペア。Alter Ego の主要な入力。
+一回の実行で観測できた assistant の thinking と、最終回答の組。thinking は部分的・省略済みの場合があり、空であることは思考や作業がなかったことを意味しない。
 
-## Relationships
+**Execution Evidence Digest**:
+観測できたツール実行の限定的な要約。実行を示す補助資料であり、記録されていない作業の不存在や、作業の正しさを示す証明ではない。
 
-- **ユーザー** → **メインエージェント** にプロンプトを送る
-- **メインエージェント** → Dissentable（thinking + final answer 含む）を生成して応答完了
-- **Alter Ego** → Assistant Trace + compaction summaries を受け取り、Reasoning Dissent を生成
-- **Reasoning Dissent** → セッションに注入され、以降のメインエージェントの文脈に含まれる
+**Dissent Assessment**:
+可視の根拠と最終回答の関係についての判断。指摘あり、明確な指摘なし、判定保留を区別し、入力不足や通信失敗による未評価とも区別する。
 
-## Example Dialogue
-
-```
-ユーザー: この関数はこれでリリースしていい？
-メインエージェント thinking: 空文字のケース...でもテスト通ってるから大丈夫か
-メインエージェント: テストも通っているので問題ありません。
-Alter Ego: ⚠️ thinking では「空文字のケース」に触れているが、final answer でその懸念が理由なく消失している。バリデーション漏れの可能性。
-ユーザー: バリデーション追加して
-メインエージェント: （Reasoning Dissent を考慮して）空文字列のバリデーションを追加しました。
-```
+**判定保留**:
+ズレの存在、またはズレと引用箇所の対応を十分に判断できない状態。「問題なし」でも「欠陥あり」でもない。

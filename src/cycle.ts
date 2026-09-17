@@ -1,18 +1,11 @@
-// ponytail: deep module — full dissent cycle behind one interface.
-import { extractTraceFromAssistant, extractCompactionSummaries, extractLastUserText, findLastAssistant, hasAlterEgoMessage, isDissentableAssistant, buildEvidenceDigest, type EvidenceItem, type AssistantTrace } from "./extract.js";
-
-export interface DissentInput {
-  userText: string;
-  assistantTrace: AssistantTrace;
-  evidenceDigest: EvidenceItem[];
-  compactionSummaries: string[];
-}
+import { extractAssistantTrace, extractCompactionSummaries, extractLastUserText, findLastAssistant, hasAlterEgoAfterAssistant, isDissentableAssistant } from "./extract.js";
+import { buildEvidenceDigest } from "./evidence.js";
+import type { DissentAssessment, DissentInput } from "./assessment.js";
 
 export interface DissentDeps {
-  spawn: (input: DissentInput) => Promise<string>;
-  isEnabled: () => boolean;
-  markLeafIfNew: (leafId: string) => boolean;
-  getCurrentLeafId: () => string | null;
+  evaluate: (input: DissentInput) => Promise<DissentAssessment>;
+  claimLeaf: (leafId: string) => (() => void) | null;
+  isCurrent: () => boolean;
 }
 
 export async function runDissent(
@@ -20,32 +13,31 @@ export async function runDissent(
   sessionContext: unknown,
   leafId: string,
   deps: DissentDeps,
-): Promise<string | null> {
-  if (hasAlterEgoMessage(messages)) return null;
+): Promise<DissentAssessment | null> {
+  if (!deps.isCurrent() || hasAlterEgoAfterAssistant(messages)) return null;
+  if (!isDissentableAssistant(findLastAssistant(messages))) return null;
 
-  const lastAssistant = findLastAssistant(messages);
-  if (!isDissentableAssistant(lastAssistant)) return null;
-
-  const assistantTrace = extractTraceFromAssistant(lastAssistant);
-  // Models that never emit a thinking trace (e.g. openai-codex) yield an empty
-  // thinking. Alter ego compares thinking against the final answer, so with no
-  // thinking there is nothing to dissent on — skip silently.
-  if (!assistantTrace.thinking.trim()) return null;
-
-  if (!deps.markLeafIfNew(leafId)) return null;
-
-  const input: DissentInput = {
-    userText: extractLastUserText(messages),
-    assistantTrace,
-    evidenceDigest: buildEvidenceDigest(messages),
-    compactionSummaries: extractCompactionSummaries(sessionContext),
-  };
-  const dissent = await deps.spawn(input);
-
-  // Race guards: state may have changed while spawn was running.
-  if (!deps.isEnabled()) return null;
-  if (deps.getCurrentLeafId() !== leafId) return null;
-
-  if (dissent.trim() === "NO_DISSENT") return null;
-  return dissent;
+  const assistantTrace = extractAssistantTrace(messages);
+  const evidenceDigest = buildEvidenceDigest(messages);
+  // No visible basis for a comparison. Missing thinking alone is never evidence of a failure.
+  if (!assistantTrace.thinking.trim() && evidenceDigest.length === 0) return null;
+  const release = deps.claimLeaf(leafId);
+  if (!release) return null;
+  try {
+    const assessment = await deps.evaluate({
+      userText: extractLastUserText(messages),
+      assistantTrace,
+      evidenceDigest,
+      compactionSummaries: extractCompactionSummaries(sessionContext),
+    });
+    if (!deps.isCurrent()) {
+      release();
+      return null;
+    }
+    return assessment;
+  } catch (error) {
+    release();
+    if (!deps.isCurrent()) return null;
+    throw error;
+  }
 }

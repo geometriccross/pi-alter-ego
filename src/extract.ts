@@ -1,80 +1,72 @@
-// ponytail: single module consolidating all pi message shape knowledge.
-// trace.ts / state.ts re-export from here for backward compat.
-
-export { EvidenceItem, buildEvidenceDigest, serializeEvidence } from "./evidence.js";
-
-// ─── Assistant trace ─────────────────────────────────────────────────
-
 export interface AssistantTrace {
   thinking: string;
   text: string;
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
+}
+
+function textParts(content: unknown, type: "text" | "thinking"): string {
+  if (typeof content === "string") return type === "text" ? content : "";
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((part) => {
+    const value = record(part);
+    return value?.type === type && typeof value[type] === "string" ? [value[type]] : [];
+  }).join("");
+}
+
+/** Includes visible thinking from tool turns of this run, not just the final message. */
 export function extractAssistantTrace(messages: readonly unknown[]): AssistantTrace {
-  const assistant = findLastAssistant(messages);
-  return extractTraceFromAssistant(assistant);
+  const last = findLastAssistant(messages);
+  return {
+    thinking: messages.flatMap((message) => {
+      const value = record(message);
+      if (value?.role !== "assistant" || value.stopReason === "error" || value.stopReason === "aborted") return [];
+      const thinking = textParts(value.content, "thinking");
+      return thinking ? [thinking] : [];
+    }).join("\n\n"),
+    text: textParts(record(last)?.content, "text"),
+  };
 }
-
-/** Extract trace from a single assistant message (avoids double-scan when caller already found it). */
-export function extractTraceFromAssistant(message: unknown): AssistantTrace {
-  const assistant = message as any;
-  if (!assistant) return { thinking: "", text: "" };
-  if (typeof assistant.content === "string") return { thinking: "", text: assistant.content };
-  if (!Array.isArray(assistant.content)) return { thinking: "", text: "" };
-
-  const thinking = assistant.content
-    .filter((part: any) => part?.type === "thinking" && typeof part.thinking === "string")
-    .map((part: any) => part.thinking)
-    .join("");
-  const text = assistant.content
-    .filter((part: any) => part?.type === "text" && typeof part.text === "string")
-    .map((part: any) => part.text)
-    .join("");
-  return { thinking, text };
-}
-
-// ─── Last user text ──────────────────────────────────────────────────
 
 export function extractLastUserText(messages: readonly unknown[]): string {
-  for (const msg of [...(messages as any[])].reverse()) {
-    if (msg?.role !== "user") continue;
-    return extractText(msg.content);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = record(messages[i]);
+    if (message?.role === "user") return textParts(message.content, "text");
   }
   return "";
 }
 
-function extractText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.filter((part: any) => part?.type === "text" && typeof part.text === "string").map((part: any) => part.text).join("");
+export function hasAlterEgoAfterAssistant(messages: readonly unknown[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = record(messages[i]);
+    if (message?.customType === "alter-ego") return true;
+    if (message?.role === "assistant") return false;
   }
-  return "";
-}
-
-// ─── Message checks ──────────────────────────────────────────────────
-
-export function hasAlterEgoMessage(messages: readonly unknown[]): boolean {
-  return (messages as any[]).some((msg) => msg?.customType === "alter-ego");
+  return false;
 }
 
 export function isDissentableAssistant(message: unknown): boolean {
-  const msg = message as any;
-  if (msg?.role !== "assistant") return false;
-  if (["toolUse", "error", "aborted"].includes(msg.stopReason)) return false;
-  return Array.isArray(msg.content) && msg.content.some((part: any) => part.type === "text" && part.text.trim().length > 0);
+  const value = record(message);
+  if (value?.role !== "assistant" || !["stop", "length"].includes(String(value.stopReason))) return false;
+  if (Array.isArray(value.content) && value.content.some((part) => record(part)?.type === "toolCall")) return false;
+  return textParts(value.content, "text").trim().length > 0;
 }
 
-/** Find the last assistant message (avoids double-scanning in callers). */
 export function findLastAssistant(messages: readonly unknown[]): unknown {
-  return [...(messages as any[])].reverse().find((msg) => msg?.role === "assistant") ?? null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (record(messages[i])?.role === "assistant") return messages[i];
+  }
+  return null;
 }
-
-// ─── Compaction summaries ────────────────────────────────────────────
 
 export function extractCompactionSummaries(sessionContext: unknown): string[] {
-  const ctx = sessionContext as any;
-  const msgs: unknown[] = ctx?.messages ?? [];
-  return (msgs as any[])
-    .filter((m: any) => m?.role === "compactionSummary" && typeof m.summary === "string")
-    .map((m: any) => m.summary);
+  const messages = record(sessionContext)?.messages;
+  if (!Array.isArray(messages)) return [];
+  return messages.flatMap((message) => {
+    const value = record(message);
+    return value?.role === "compactionSummary" && typeof value.summary === "string" ? [value.summary] : [];
+  });
 }

@@ -1,79 +1,61 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// ponytail: .pi is pi's project config dir name (CONFIG_DIR_NAME not exported from pi-coding-agent)
-const CONFIG_DIR = ".pi";
-const CONFIG_FILE = "alter-ego.json";
-
 export interface AlterEgoSettings {
-  model?: string;
-  timeout?: number; // seconds, > 0
+  model: string;
+  timeout: number;
+  threshold: number;
+  quoteConfidence: number;
 }
 
-export const DEFAULT_TIMEOUT_SECONDS = 90;
+export const DEFAULT_SETTINGS: Readonly<AlterEgoSettings> = {
+  model: "jev-latest",
+  timeout: 30,
+  threshold: 0.85,
+  quoteConfidence: 0.5,
+};
 
-function readModel(configPath: string): string | null {
-  try {
-    const raw = fs.readFileSync(configPath, "utf-8");
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "model" in parsed &&
-      typeof (parsed as AlterEgoSettings).model === "string" &&
-      (parsed as AlterEgoSettings).model!.trim().length > 0
-    ) {
-      return (parsed as AlterEgoSettings).model!.trim();
-    }
-  } catch {
-    // Missing file, bad JSON, or wrong shape → silently skip.
+export function resolveAlterEgoSettings(projectCwd: string, agentDir: string): AlterEgoSettings {
+  const globalPath = path.join(agentDir, "alter-ego.json");
+  const projectPath = path.join(projectCwd, ".pi", "alter-ego.json");
+  const global = readSettings(globalPath);
+  const project = readSettings(projectPath);
+  const value = { ...DEFAULT_SETTINGS, ...global, ...project };
+  const origin = (key: string) => Object.hasOwn(project, key) ? projectPath : globalPath;
+  // Validate effective values: a project Jev setting can override an old global Pi model.
+  if (typeof value.model !== "string" || !/^jev-[\w.-]+$/.test(value.model.trim())) {
+    throw new Error(`${origin("model")}: model は Jev のモデルIDに変更してください（例: jev-latest）。旧Piモデル設定は使用できません`);
   }
-  return null;
-}
-
-function readTimeout(configPath: string): number | null {
-  try {
-    const raw = fs.readFileSync(configPath, "utf-8");
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "timeout" in parsed &&
-      typeof (parsed as AlterEgoSettings).timeout === "number" &&
-      Number.isFinite((parsed as AlterEgoSettings).timeout!) &&
-      (parsed as AlterEgoSettings).timeout! > 0
-    ) {
-      return (parsed as AlterEgoSettings).timeout!;
-    }
-  } catch {
-    // Missing file, bad JSON, or wrong shape → silently skip.
+  if (!validNumber(value.timeout) || value.timeout <= 0 || value.timeout > 300) {
+    throw new Error(`${origin("timeout")}: timeout は 0 より大きく 300 以下の秒数です`);
   }
-  return null;
+  if (!validNumber(value.threshold) || value.threshold <= 0.5 || value.threshold > 1) {
+    throw new Error(`${origin("threshold")}: threshold は 0.5 より大きく 1 以下です`);
+  }
+  if (!validNumber(value.quoteConfidence) || value.quoteConfidence < 0 || value.quoteConfidence > 1) {
+    throw new Error(`${origin("quoteConfidence")}: quoteConfidence は 0〜1 です`);
+  }
+  return { model: value.model.trim(), timeout: value.timeout, threshold: value.threshold, quoteConfidence: value.quoteConfidence };
 }
 
-export function resolveAlterEgoTimeout(
-  projectCwd: string,
-  agentDir: string,
-): number {
-  const timeout = readTimeout(path.join(projectCwd, CONFIG_DIR, CONFIG_FILE));
-  if (timeout !== null) return timeout;
-
-  const globalTimeout = readTimeout(path.join(agentDir, CONFIG_FILE));
-  if (globalTimeout !== null) return globalTimeout;
-
-  return DEFAULT_TIMEOUT_SECONDS;
+function readSettings(configPath: string): Record<string, unknown> {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(configPath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new Error(`${configPath}: 設定を読み取れません`);
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new Error(`${configPath}: JSONが不正です`); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${configPath}: オブジェクトが必要です`);
+  const value = parsed as Record<string, unknown>;
+  for (const key of Object.keys(value)) {
+    if (!Object.hasOwn(DEFAULT_SETTINGS, key)) throw new Error(`${configPath}: 未対応の設定項目（model, timeout, threshold, quoteConfidence のみ）`);
+  }
+  return value;
 }
 
-export function resolveAlterEgoModel(
-  projectCwd: string,
-  agentDir: string,
-  fallback: string,
-): string {
-  const model = readModel(path.join(projectCwd, CONFIG_DIR, CONFIG_FILE));
-  if (model !== null) return model;
-
-  const globalModel = readModel(path.join(agentDir, CONFIG_FILE));
-  if (globalModel !== null) return globalModel;
-
-  return fallback;
+function validNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }

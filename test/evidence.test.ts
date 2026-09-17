@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEvidenceDigest, serializeEvidence, MAX_SUMMARY_LENGTH, MAX_FACTS, MAX_TOOL_RESULT_TEXT_LENGTH, MAX_COMMAND_SCAN_LENGTH, MAX_EVIDENCE_ITEMS, MAX_TOOL_NAME_LENGTH, MAX_TOOL_CALL_ID_LENGTH, type EvidenceItem } from "../src/evidence.js";
+import { buildEvidenceDigest, MAX_SUMMARY_LENGTH, MAX_FACTS, MAX_TOOL_RESULT_TEXT_LENGTH, MAX_COMMAND_SCAN_LENGTH, MAX_EVIDENCE_ITEMS, MAX_TOOL_NAME_LENGTH, MAX_TOOL_CALL_ID_LENGTH, type EvidenceItem } from "../src/evidence.js";
 
 describe("buildEvidenceDigest", () => {
   describe("tool call extraction", () => {
@@ -1258,15 +1258,15 @@ describe("buildEvidenceDigest", () => {
       ];
 
       const evidence = buildEvidenceDigest(messages);
-      const serialized = serializeEvidence(evidence);
+      const serialized = JSON.stringify(evidence);
       
       // Raw toolCallId must not appear in serialized output
       expect(serialized).not.toContain(sensitiveId);
       expect(serialized).not.toContain("sk-proj-");
       expect(serialized).not.toContain("secret-key");
       
-      // Should use ordinal index instead
-      expect(serialized).toContain('index="0"');
+      // JSON array position identifies evidence without raw call IDs.
+      expect(JSON.parse(serialized)).toHaveLength(1);
       expect(serialized).not.toContain("toolCallId");
     });
 
@@ -1294,7 +1294,7 @@ describe("buildEvidenceDigest", () => {
       ];
 
       const evidence = buildEvidenceDigest(messages);
-      const serialized = serializeEvidence(evidence);
+      const serialized = JSON.stringify(evidence);
       
       // Raw unexpected toolName must not appear anywhere
       expect(serialized).not.toContain(sensitiveToolName);
@@ -1352,13 +1352,8 @@ describe("buildEvidenceDigest", () => {
       ];
 
       const evidence = buildEvidenceDigest(messages);
-      const serialized = serializeEvidence(evidence);
-      
-      // Known tool names should appear in serialized output
-      expect(serialized).toContain('tool="bash"');
-      expect(serialized).toContain('tool="read"');
-      expect(serialized).toContain('tool="edit"');
-      expect(serialized).toContain('tool="write"');
+      const serialized = JSON.stringify(evidence);
+      expect(JSON.parse(serialized).map((item: EvidenceItem) => item.toolName)).toEqual(["bash", "read", "edit", "write"]);
       
       // Evidence items should have normalized known names
       expect(evidence[0].toolName).toBe("bash");
@@ -1395,7 +1390,7 @@ describe("buildEvidenceDigest", () => {
       }
 
       const evidence = buildEvidenceDigest(messages);
-      const serialized = serializeEvidence(evidence);
+      const serialized = JSON.stringify(evidence);
       
       // Malicious content must not appear
       expect(serialized).not.toContain(maliciousId);
@@ -1469,7 +1464,7 @@ describe("buildEvidenceDigest", () => {
 
       const evidence = buildEvidenceDigest(messages);
       const summary = evidence[0].summary;
-      const serialized = serializeEvidence(evidence);
+      const serialized = JSON.stringify(evidence);
 
       // Summary should only contain safe path-based summary
       expect(summary).toContain("read");
@@ -1506,7 +1501,7 @@ describe("buildEvidenceDigest", () => {
 
       const evidence = buildEvidenceDigest(messages);
       const summary = evidence[0].summary;
-      const serialized = serializeEvidence(evidence);
+      const serialized = JSON.stringify(evidence);
 
       expect(summary).toContain("edit");
       expect(summary).toContain("/test/file.ts");
@@ -1538,7 +1533,7 @@ describe("buildEvidenceDigest", () => {
 
       const evidence = buildEvidenceDigest(messages);
       const summary = evidence[0].summary;
-      const serialized = serializeEvidence(evidence);
+      const serialized = JSON.stringify(evidence);
 
       expect(summary).toContain("write");
       expect(summary).toContain("/test/file.ts");
@@ -2274,7 +2269,7 @@ describe("buildEvidenceDigest", () => {
       expect(evidence).toHaveLength(1);
       expect(evidence[0].toolName).toBe("other");
 
-      const serialized = serializeEvidence(evidence);
+      const serialized = JSON.stringify(evidence);
       expect(serialized).not.toContain("SECRET_API_KEY");
       expect(serialized).not.toContain("sk_live_");
       expect(serialized).not.toContain("aaaaa");
