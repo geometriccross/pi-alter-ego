@@ -1,6 +1,5 @@
 import {
   buildSessionContext,
-  getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -8,7 +7,7 @@ import { askJev } from "./jev.js";
 import { renderAlterEgoMessage } from "./renderer.js";
 import { createAlterEgoState } from "./state.js";
 import { runDissent } from "./cycle.js";
-import { loadQuestions } from "./questions.js";
+import { loadConfig } from "./config.js";
 
 export default function alterEgoExtension(pi: ExtensionAPI) {
   const state = createAlterEgoState();
@@ -68,7 +67,7 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
       ctx.sessionManager.getLeafId() === leafId;
 
     try {
-      const questions = loadQuestions(ctx.cwd, getAgentDir());
+      const { questions, apiKey } = loadConfig(ctx.cwd);
       if (Object.keys(questions).length === 0) {
         return;
       }
@@ -79,7 +78,7 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
           askJev(
             { state: input, questions },
             {
-              apiKey: process.env.TYPESAFE_API_KEY,
+              apiKey,
               signal: controller.signal,
             },
           ),

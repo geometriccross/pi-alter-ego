@@ -195,7 +195,9 @@ describe("extension -> Jev -> session integration", () => {
     await env.handlers.session_start({}, env.ctx);
     await env.run();
     expect(fetchImpl).toHaveBeenCalledOnce();
-    const request = JSON.parse(fetchImpl.mock.calls[0][1]!.body as string);
+    const init = fetchImpl.mock.calls[0][1]!;
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer test-key");
+    const request = JSON.parse(init.body as string);
     expect(request).toEqual({
       model: "jev-latest",
       questions: sampleQuestions,

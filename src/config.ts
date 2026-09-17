@@ -1,15 +1,19 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { JevRequest } from "./jev.js";
 
-export function loadQuestions(
-  projectCwd: string,
-  agentDir: string,
-): JevRequest["questions"] {
+export interface AlterEgoConfig {
+  questions: JevRequest["questions"];
+  apiKey: string | undefined;
+}
+
+export function loadConfig(projectCwd: string): AlterEgoConfig {
   const paths = [
     join(projectCwd, ".pi", "alter-ego.json"),
-    join(agentDir, "alter-ego.json"),
+    join(getAgentDir(), "alter-ego.json"),
   ];
+  let questions: JevRequest["questions"] = {};
 
   for (const path of paths) {
     let text: string;
@@ -31,8 +35,9 @@ export function loadQuestions(
       throw new Error(`${path}: JSONが不正です（未評価）`);
     }
 
-    return config.questions ?? {};
+    questions = config.questions ?? {};
+    break;
   }
 
-  return {};
+  return { questions, apiKey: process.env.TYPESAFE_API_KEY };
 }

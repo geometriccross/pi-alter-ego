@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadQuestions } from "../src/questions.js";
+import { loadConfig } from "../src/config.js";
 
 const sampleQuestions = {
   custom_check: { type: "noul", instructions: "A custom question" },
@@ -20,26 +20,32 @@ const sampleQuestions = {
 
 const dirs: string[] = [];
 
+beforeEach(() => {
+  vi.stubEnv("TYPESAFE_API_KEY", undefined);
+});
+
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of dirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
 function setup() {
-  const root = mkdtempSync(join(tmpdir(), "alter-ego-questions-"));
+  const root = mkdtempSync(join(tmpdir(), "alter-ego-config-"));
   dirs.push(root);
 
   const cwd = join(root, "project");
   const agentDir = join(root, "agent");
   mkdirSync(join(cwd, ".pi"), { recursive: true });
   mkdirSync(agentDir);
+  vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 
   const projectPath = join(cwd, ".pi", "alter-ego.json");
   const globalPath = join(agentDir, "alter-ego.json");
 
   return {
-    load: () => loadQuestions(cwd, agentDir),
+    load: () => loadConfig(cwd),
     projectPath,
     globalPath,
     project: (value: unknown) => writeFileSync(projectPath, JSON.stringify(value)),
@@ -47,22 +53,22 @@ function setup() {
   };
 }
 
-describe("TypeSafe questions from local configuration", () => {
-  it("has no built-in questions", () => {
-    expect(setup().load()).toEqual({});
+describe("Alter Ego configuration", () => {
+  it("has no built-in questions or credentials", () => {
+    expect(setup().load()).toEqual({ questions: {}, apiKey: undefined });
   });
 
   it("uses a project's questions as a whole, without adding global questions or defaults", () => {
     const config = setup();
     config.global({ questions: sampleQuestions });
-    expect(config.load()).toEqual(sampleQuestions);
+    expect(config.load().questions).toEqual(sampleQuestions);
     const questions = {
       custom_check: { type: "noul", instructions: "A custom question" },
     };
     config.project({ questions });
-    expect(config.load()).toEqual(questions);
+    expect(config.load().questions).toEqual(questions);
     config.project({ questions: {} });
-    expect(config.load()).toEqual({});
+    expect(config.load().questions).toEqual({});
   });
 
   it("passes arbitrary IDs, all primitive types, and structured JSON through unchanged", () => {
@@ -77,7 +83,7 @@ describe("TypeSafe questions from local configuration", () => {
       },
     };
     config.project({ questions });
-    expect(config.load()).toEqual(questions);
+    expect(config.load().questions).toEqual(questions);
   });
 
   it("leaves question validation to TypeSafe rather than imposing an application schema", () => {
@@ -89,24 +95,28 @@ describe("TypeSafe questions from local configuration", () => {
       },
     };
     config.project({ questions });
-    expect(config.load()).toEqual(questions);
+    expect(config.load().questions).toEqual(questions);
   });
 
-  it("reloads changes and ignores unrelated settings", () => {
+  it("reloads file and environment changes and ignores unrelated settings", () => {
     const config = setup();
-    config.project({ model: "old-model", timeout: 0 });
-    expect(config.load()).toEqual({});
+    config.project({ model: "old-model", timeout: 0, apiKey: "ignored-file-key" });
+    expect(config.load()).toEqual({ questions: {}, apiKey: undefined });
+    vi.stubEnv("TYPESAFE_API_KEY", "first-key");
     config.project({ model: "other", state: "ignored", questions: sampleQuestions });
-    expect(config.load()).toEqual(sampleQuestions);
+    expect(config.load()).toEqual({ questions: sampleQuestions, apiKey: "first-key" });
+    vi.stubEnv("TYPESAFE_API_KEY", "updated-key");
     config.project({ questions: {} });
-    expect(config.load()).toEqual({});
+    expect(config.load()).toEqual({ questions: {}, apiKey: "updated-key" });
+    vi.stubEnv("TYPESAFE_API_KEY", undefined);
+    expect(config.load()).toEqual({ questions: {}, apiKey: undefined });
   });
 
   it("does not read an overridden global file", () => {
     const config = setup();
     writeFileSync(config.globalPath, "{bad JSON");
     config.project({ questions: sampleQuestions });
-    expect(config.load()).toEqual(sampleQuestions);
+    expect(config.load().questions).toEqual(sampleQuestions);
   });
 
   it("reports malformed JSON and unreadable files without using another configuration", () => {
