@@ -16,6 +16,7 @@ export interface DissentSource {
 }
 
 export interface DissentInput {
+  event: { type: "agent_end" };
   userText: string;
   assistantTrace: AssistantTrace;
   compactionSummaries: string[];
@@ -54,6 +55,7 @@ export function prepareDissentRequest(
 
   const sessionContext = buildSessionContext([...entries], leafId);
   const state: DissentInput = {
+    event: { type: "agent_end" },
     userText: extractLastUserText(messages),
     assistantTrace: extractAssistantTrace(messages),
     compactionSummaries: extractCompactionSummaries(sessionContext),

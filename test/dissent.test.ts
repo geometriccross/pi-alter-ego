@@ -59,6 +59,7 @@ describe("pure dissent preparation", () => {
     const request = prepareDissentRequest(messages, entries, source.leafId, questions);
     expect(request).toEqual({
       state: {
+        event: { type: "agent_end" },
         userText: "Ship it?",
         assistantTrace: {
           thinking: "Input validation is untested.",

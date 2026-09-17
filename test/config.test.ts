@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, questionsForHook, type AlterEgoConfig } from "../src/config.js";
 
 const sampleQuestions = {
   custom_check: { type: "noul", instructions: "A custom question" },
@@ -96,6 +96,49 @@ describe("Alter Ego configuration", () => {
     };
     config.project({ questions });
     expect(config.load()).toEqual({ ok: true, value: { questions, apiKey: undefined } });
+  });
+
+  it("routes and batches by Pi hook names, defaults to agent_end, and strips only routing metadata", () => {
+    const config = setup();
+    const questions: AlterEgoConfig["questions"] = {
+      legacy: { type: "noul", instructions: "Final answer?" },
+      before_tool: { type: "noul", instructions: "Safe tool call?", on: "tool_call" },
+      multiple: { ...sampleQuestions.category, type: "choice", on: ["tool_call", "agent_end", "tool_call"] },
+      ...JSON.parse('{"__proto__":{"type":"noul","instructions":{"on":"This is question content"},"on":"tool_call"}}'),
+    };
+    config.project({ questions });
+    const loaded = config.load();
+    expect(loaded).toEqual({ ok: true, value: { questions, apiKey: undefined } });
+    if (!loaded.ok) throw new Error(loaded.error);
+    expect(questionsForHook(loaded.value.questions, "tool_call")).toEqual({
+      before_tool: { type: "noul", instructions: "Safe tool call?" },
+      multiple: sampleQuestions.category,
+      ...JSON.parse('{"__proto__":{"type":"noul","instructions":{"on":"This is question content"}}}'),
+    });
+    expect(questionsForHook(loaded.value.questions, "agent_end")).toEqual({
+      legacy: questions.legacy, multiple: sampleQuestions.category,
+    });
+    expect(questionsForHook(loaded.value.questions, "input")).toEqual({});
+    expect(loaded.value.questions).toEqual(questions);
+  });
+
+  it.each(["unknown_hook", "message_update", "before_provider_request", "", [], ["tool_call", "typo"], [1], null, false, {}].map((on) => ({ on })))(
+    "rejects invalid or unsupported on values without falling back: $on",
+    ({ on }) => {
+      const config = setup();
+      config.global({ questions: sampleQuestions });
+      config.project({ questions: { check: { type: "noul", instructions: "Check", on } } });
+      expect(config.load()).toEqual({
+        ok: false,
+        error: expect.stringContaining(`${config.projectPath}: questions.check.on`),
+      });
+    },
+  );
+
+  it.each([[], "invalid", 1, { invalid: null }].map((questions) => ({ questions })))("rejects non-object question maps or entries: $questions", ({ questions }) => {
+    const config = setup();
+    config.project({ questions });
+    expect(config.load()).toEqual({ ok: false, error: expect.stringContaining("JSONオブジェクト") });
   });
 
   it("reloads file and environment changes and ignores unrelated settings", () => {

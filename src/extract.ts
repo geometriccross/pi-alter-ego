@@ -17,6 +17,10 @@ function textParts(content: unknown, type: "text" | "thinking"): string {
   }).join("");
 }
 
+export function extractText(content: unknown): string {
+  return textParts(content, "text");
+}
+
 /** Includes visible thinking from tool turns of this run, not just the final message. */
 export function extractAssistantTrace(messages: readonly unknown[]): AssistantTrace {
   const last = findLastAssistant(messages);

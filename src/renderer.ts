@@ -32,7 +32,7 @@ export const renderAlterEgoMessage: MessageRenderer = (message, options, theme) 
   return container;
 };
 
-function safeDisplay(text: string): string {
+export function safeDisplay(text: string): string {
   return text.replace(
     /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,
     (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
