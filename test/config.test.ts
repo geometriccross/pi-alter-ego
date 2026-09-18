@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, questionsForHook, type AlterEgoConfig } from "../src/config.js";
+import { loadConfig, type AlterEgoConfig } from "../src/config.js";
+import { parseConfig, questionsForHook } from "../src/config-schema.js";
+import { freeze } from "./helpers.js";
 
 const sampleQuestions = {
   custom_check: { type: "noul", instructions: "A custom question" },
@@ -52,6 +54,29 @@ function setup() {
     global: (value: unknown) => writeFileSync(globalPath, JSON.stringify(value)),
   };
 }
+
+describe("pure configuration", () => {
+  it("parses supplied text using explicit credentials, not the filesystem or environment", () => {
+    const text = JSON.stringify({ questions: sampleQuestions });
+    const expected = { ok: true, value: { questions: sampleQuestions, apiKey: "explicit-key" } };
+    expect(parseConfig(text, "/synthetic/config.json", "explicit-key")).toEqual(expected);
+    vi.stubEnv("TYPESAFE_API_KEY", "ambient-key");
+    expect(parseConfig(text, "/synthetic/config.json", "explicit-key")).toEqual(expected);
+    expect(parseConfig("{", "/synthetic/config.json", "explicit-key")).toEqual({
+      ok: false, error: "/synthetic/config.json: JSONが不正です（未評価）",
+    });
+  });
+
+  it("routes frozen questions without removing their routing metadata in place", () => {
+    const questions = freeze<AlterEgoConfig["questions"]>({
+      check: { type: "noul", instructions: "Check", on: ["input", "agent_end"] },
+    });
+    const routed = questionsForHook(questions, "input");
+    expect(routed).toEqual({ check: { type: "noul", instructions: "Check" } });
+    expect(questionsForHook(questions, "agent_end")).toEqual(routed);
+    expect(questions.check.on).toEqual(["input", "agent_end"]);
+  });
+});
 
 describe("Alter Ego configuration", () => {
   it("has no built-in questions or credentials", () => {

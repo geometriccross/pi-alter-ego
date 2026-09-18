@@ -10,6 +10,27 @@ export function err<E>(error: E): { readonly ok: false; readonly error: E } {
   return { ok: false, error };
 }
 
+export function map<T, U, E = never>(result: Result<T, E>, transform: (value: T) => U): Result<U, E> {
+  return result.ok ? ok(transform(result.value)) : result;
+}
+
+export function mapError<T, E, F>(result: Result<T, E>, transform: (error: E) => F): Result<T, F> {
+  return result.ok ? result : err(transform(result.error));
+}
+
+export function traverse<T, U, E = never>(
+  items: readonly T[],
+  transform: (item: T) => Result<U, E>,
+): Result<U[], E> {
+  const values: U[] = [];
+  for (const item of items) {
+    const result = transform(item);
+    if (!result.ok) return result;
+    values.push(result.value);
+  }
+  return ok(values);
+}
+
 export function andThen<T, U, E = never, F = never>(
   result: Result<T, E>,
   next: (value: T) => Result<U, F>,

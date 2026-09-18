@@ -3,14 +3,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { findDissentSource, prepareDissentRequest } from "../src/dissent.js";
 import type { JevRequest } from "../src/jev.js";
-
-function freeze<T>(value: T): T {
-  if (value !== null && typeof value === "object") {
-    Object.values(value).forEach(freeze);
-    Object.freeze(value);
-  }
-  return value;
-}
+import { freeze } from "./helpers.js";
 
 const user = freeze({ role: "user", content: "Ship it?", timestamp: 0 } as const);
 const assistant = freeze<AssistantMessage>({

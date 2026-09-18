@@ -76,6 +76,21 @@ function snapshotEvent(event: HookEvent): object {
   }
 }
 
+function messagesForEvent(event: HookEvent, messages: readonly Message[]): readonly Message[] {
+  if (event.type === "context") return event.messages;
+  if (event.type !== "message_end" && event.type !== "turn_end") return messages;
+  // message_end runs before Pi persists the message. turn_end normally runs after it.
+  const index = messages.findIndex((message) =>
+    message.role === event.message.role && message.timestamp === event.message.timestamp);
+  return index < 0 ? [...messages, event.message]
+    : messages.map((message, i) => i === index ? event.message : message);
+}
+
+function currentRun(messages: readonly Message[]): readonly Message[] {
+  const lastUser = messages.reduce((last, message, index) => message.role === "user" ? index : last, 0);
+  return messages.slice(lastUser);
+}
+
 export function prepareHookRequest(
   event: HookEvent,
   entries: readonly SessionEntry[],
@@ -87,20 +102,7 @@ export function prepareHookRequest(
   if (event.type === "message_end" && snapshotMessage(event.message) === null) return null;
 
   const context = buildSessionContext([...entries], leafId);
-  let messages: readonly unknown[] = context.messages;
-  if (event.type === "context") messages = event.messages;
-  if (event.type === "message_end" || event.type === "turn_end") {
-    // message_end runs before Pi persists the message. turn_end normally runs after it.
-    const index = messages.findIndex((value) => {
-      const message = value as Message;
-      return message.role === event.message.role && message.timestamp === event.message.timestamp;
-    });
-    messages = index < 0 ? [...messages, event.message]
-      : messages.map((message, i) => i === index ? event.message : message);
-  }
-  let lastUser = messages.length - 1;
-  while (lastUser >= 0 && (messages[lastUser] as Message).role !== "user") lastUser--;
-  messages = messages.slice(Math.max(0, lastUser));
+  const messages = currentRun(messagesForEvent(event, context.messages));
 
   const starting = event.type === "input" || event.type === "before_agent_start" || event.type === "agent_start";
   const userText = event.type === "input" ? event.text

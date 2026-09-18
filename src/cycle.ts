@@ -7,6 +7,13 @@ export interface DissentDeps {
   isCurrent: () => boolean;
 }
 
+export function completeDissent(result: Result<JevResponse>, current: boolean): {
+  readonly result: Result<JevResponse | null>;
+  readonly releaseClaim: boolean;
+} {
+  return { result: current ? result : ok(null), releaseClaim: !result.ok || !current };
+}
+
 export async function runDissent(
   request: JevRequest | null,
   leafId: string,
@@ -25,9 +32,7 @@ export async function runDissent(
     () => deps.evaluate(request),
     () => "Jev評価に失敗しました",
   );
-  const current = deps.isCurrent();
-  if (!result.ok || !current) {
-    release();
-  }
-  return current ? result : ok(null);
+  const completion = completeDissent(result, deps.isCurrent());
+  if (completion.releaseClaim) release();
+  return completion.result;
 }

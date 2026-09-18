@@ -100,6 +100,19 @@ describe("Jev result boundary", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it.each(["success", "invalid payload", "already aborted"])("releases resources after %s", async (kind) => {
+    vi.useFakeTimers();
+    const parent = new AbortController();
+    if (kind === "already aborted") parent.abort();
+    const fetchImpl = kind === "invalid payload" ? respond(null) : respond();
+    const result = await askJev(request, { ...options, signal: parent.signal }, fetchImpl);
+    expect(result).toEqual(kind === "success" ? { ok: true, value: response() }
+      : kind === "invalid payload" ? unavailable : { ok: false, error: "Jev評価をキャンセルしました" });
+    expect(fetchImpl).toHaveBeenCalledTimes(kind === "already aborted" ? 0 : 1);
+    expect(getEventListeners(parent.signal, "abort")).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each(["cancel", "timeout"])("returns %s and releases the timer and abort listener", async (kind) => {
     vi.useFakeTimers();
     const parent = new AbortController();

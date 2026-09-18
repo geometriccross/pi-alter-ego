@@ -1,3 +1,5 @@
+import { claimStateLeaf, releaseStateLeaf, resetStateClaims, restoreState, toggleState } from "./state-model.js";
+
 export interface AlterEgoState {
   isEnabled(): boolean;
   restoreFromBranch(branch: readonly unknown[]): void;
@@ -7,72 +9,32 @@ export interface AlterEgoState {
 }
 
 export function createAlterEgoState(): AlterEgoState {
-  let enabled = true;
-  const processedLeaves = new Map<string, symbol>();
+  let state = restoreState([]);
 
   return {
-    isEnabled: () => enabled,
+    isEnabled: () => state.enabled,
 
     restoreFromBranch(branch) {
-      enabled = true;
-      processedLeaves.clear();
-
-      // SessionManager.getBranch() is ordered root -> leaf.
-      for (const raw of branch) {
-        const entry = raw as {
-          type?: string;
-          customType?: string;
-          data?: any;
-          details?: any;
-        } | null;
-
-        if (
-          entry?.type === "custom" &&
-          entry.customType === "alter-ego-toggle" &&
-          typeof entry.data?.enabled === "boolean"
-        ) {
-          enabled = entry.data.enabled;
-        }
-
-        let result;
-        if (entry?.type === "custom" && entry.customType === "alter-ego-assessment") {
-          result = entry.data;
-        } else if (entry?.type === "custom_message" && entry.customType === "alter-ego") {
-          result = entry.details;
-        }
-
-        if (
-          typeof result?.sourceLeafId === "string" &&
-          (result?.response?.answers || result?.assessment?.version === 1)
-        ) {
-          processedLeaves.set(result.sourceLeafId, Symbol());
-        }
-      }
+      state = restoreState(branch);
     },
 
     toggle() {
-      enabled = !enabled;
-      return enabled;
+      state = toggleState(state);
+      return state.enabled;
     },
 
     claimLeaf(leafId) {
-      if (!leafId || processedLeaves.has(leafId)) {
-        return null;
-      }
-
       const token = Symbol();
-      processedLeaves.set(leafId, token);
-
-      // A cancelled old request must not release a newer claim after tree navigation/reload.
+      const claimed = claimStateLeaf(state, leafId, token);
+      if (claimed === null) return null;
+      state = claimed;
       return () => {
-        if (processedLeaves.get(leafId) === token) {
-          processedLeaves.delete(leafId);
-        }
+        state = releaseStateLeaf(state, leafId, token);
       };
     },
 
     resetProcessedLeaves() {
-      processedLeaves.clear();
+      state = resetStateClaims(state);
     },
   };
 }

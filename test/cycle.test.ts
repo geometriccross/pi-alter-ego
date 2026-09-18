@@ -24,6 +24,16 @@ function setup() {
 }
 
 describe("dissent result lifecycle", () => {
+  it.each(["no request", "stale request"])("skips %s without claiming a leaf or evaluating", async (kind) => {
+    const { deps, evaluate } = setup();
+    const claimLeaf = vi.fn(deps.claimLeaf);
+    await expect(runDissent(kind === "no request" ? null : request, "leaf", {
+      ...deps, claimLeaf, isCurrent: () => kind !== "stale request",
+    })).resolves.toEqual({ ok: true, value: null });
+    expect(claimLeaf).not.toHaveBeenCalled();
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
   it.each(["failure result", "unexpected rejection"])("releases the claim after %s and permits retry", async (kind) => {
     const { state, deps, evaluate } = setup();
     if (kind === "failure result") {
@@ -41,13 +51,13 @@ describe("dissent result lifecycle", () => {
     expect(evaluate).toHaveBeenCalledTimes(2);
   });
 
-  it("turns stale failures into skips and releases their claims", async () => {
+  it.each(["success", "failure"])("turns stale %s into a skip and releases the claim", async (kind) => {
     const { state, deps, evaluate } = setup();
     let current = true;
     deps.isCurrent = () => current;
     evaluate.mockImplementationOnce(async () => {
       current = false;
-      return { ok: false, error: "Late failure" };
+      return kind === "failure" ? { ok: false, error: "Late failure" } : { ok: true, value: response };
     });
     await expect(runDissent(request, "leaf", deps)).resolves.toEqual({ ok: true, value: null });
     expect(state.claimLeaf("leaf")).not.toBeNull();

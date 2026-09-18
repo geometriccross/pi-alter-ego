@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderAlterEgoMessage } from "../src/renderer.js";
+import { buildAlterEgoMessageView } from "../src/message-view.js";
+import { freeze } from "./helpers.js";
 
 const theme = { fg: (_color: string, text: string) => text } as any;
 const message = {
@@ -17,6 +19,16 @@ const message = {
 } as const;
 
 describe("Jev message renderer", () => {
+  it("builds a replayable display value from frozen data without a theme or TUI", () => {
+    const frozen = freeze(message);
+    const view = buildAlterEgoMessageView(frozen, false);
+    expect(view).toEqual({ heading: "── Alter Ego / Jev ──", content: message.content, details: undefined });
+    expect(buildAlterEgoMessageView(frozen, false)).toEqual(view);
+    expect(buildAlterEgoMessageView(frozen, true)).toEqual({
+      ...view, details: JSON.stringify(message.details, null, 2),
+    });
+  });
+
   it("renders quotes literally, not as Markdown links or formatting", () => {
     const component = renderAlterEgoMessage(message, { expanded: false }, theme)!;
     const output = component.render(100).join("\n");

@@ -116,6 +116,7 @@ export default function alterEgoExtension(pi: ExtensionAPI) {
     prompt = event.prompt;
     await evaluateHook(event, ctx);
   });
+
   pi.on("session_compact", evaluateHook);
   pi.on("input", evaluateHook);
   pi.on("turn_start", evaluateHook);

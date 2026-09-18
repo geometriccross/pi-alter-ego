@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { prepareHookRequest, type HookEvent } from "../src/hooks.js";
 import type { JevRequest } from "../src/jev.js";
+import { freeze } from "./helpers.js";
 
 const questions: JevRequest["questions"] = {
   check: { type: "noul", instructions: "Does the event need attention?" },
@@ -34,9 +35,12 @@ describe("hook state snapshots", () => {
     manager.branch(userId);
     manager.appendCompaction("Other branch summary", userId, 200);
 
-    const request = prepareHookRequest({
+    const event = freeze({
       type: "turn_end", turnIndex: 0, message: structuredClone(assistant), toolResults: [toolResult],
-    } as HookEvent, manager.getEntries(), leafId, questions);
+    } as HookEvent);
+    const entries = freeze(manager.getEntries());
+    const request = prepareHookRequest(event, entries, leafId, freeze(questions));
+    expect(prepareHookRequest(event, entries, leafId, questions)).toEqual(request);
     expect(request?.state).toEqual({
       event: {
         type: "turn_end", turnIndex: 0,
