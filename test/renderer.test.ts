@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderAlterEgoMessage } from "../src/renderer.js";
-import { buildAlterEgoMessageView } from "../src/message-view.js";
+import { renderAlterEgoMessage, buildAlterEgoMessageView } from "../src/output.js";
 import { freeze } from "./helpers.js";
 
 const theme = { fg: (_color: string, text: string) => text } as any;

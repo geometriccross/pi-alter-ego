@@ -1,30 +1,39 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { parseConfig, type AlterEgoConfig } from "./config-schema.js";
-import { andThen, attempt, err, ok, type Result } from "./result.js";
+import type { JevQuestion, JevRequest, QuestionHook } from "./evaluation.js";
 
-export { parseConfig, questionsForHook, type AlterEgoConfig, type ConfiguredQuestion } from "./config-schema.js";
+export type ConfiguredQuestion = JevQuestion & { readonly on?: QuestionHook | readonly QuestionHook[] };
 
-function readOptionalFile(path: string): Result<string | null> {
-  const text = attempt(() => readFileSync(path, "utf-8"), (error) => error);
-  if (text.ok) return text;
-  return (text.error as NodeJS.ErrnoException | null)?.code === "ENOENT"
-    ? ok(null)
-    : err(`${path}: 質問設定を読み取れません（未評価）`);
+export interface AlterEgoConfig {
+  readonly questions: Readonly<Record<string, ConfiguredQuestion>>;
+  readonly apiKey: string | undefined;
 }
 
-function loadFirstConfig(paths: readonly string[], apiKey: string | undefined): Result<AlterEgoConfig> {
-  const [path, ...remaining] = paths;
-  if (path === undefined) return ok({ questions: {}, apiKey });
-  return andThen(readOptionalFile(path), (text) => text === null
-    ? loadFirstConfig(remaining, apiKey)
-    : parseConfig(text, path, apiKey));
+export function parseConfig(text: string, apiKey: string | undefined): AlterEgoConfig {
+  const config = JSON.parse(text) as { questions?: AlterEgoConfig["questions"] };
+  return { questions: config.questions ?? {}, apiKey };
 }
 
-export function loadConfig(projectCwd: string): Result<AlterEgoConfig> {
-  return loadFirstConfig([
-    join(projectCwd, ".pi", "alter-ego.json"),
-    join(getAgentDir(), "alter-ego.json"),
-  ], process.env.TYPESAFE_API_KEY);
+export function questionsForHook(questions: AlterEgoConfig["questions"], hook: QuestionHook): JevRequest["questions"] {
+  return Object.fromEntries(Object.entries(questions).flatMap(([id, { on = "agent_end", ...question }]) => {
+    const hooks = typeof on === "string" ? [on] : on;
+    return hooks.includes(hook) ? [[id, question]] : [];
+  }));
+}
+
+function readOptionalFile(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export function loadConfig(projectCwd: string): AlterEgoConfig {
+  const text = readOptionalFile(join(projectCwd, ".pi", "alter-ego.json"))
+    ?? readOptionalFile(join(getAgentDir(), "alter-ego.json"))
+    ?? "{}";
+  return parseConfig(text, process.env.TYPESAFE_API_KEY);
 }

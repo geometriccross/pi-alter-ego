@@ -2,54 +2,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, type AlterEgoConfig } from "../src/config.js";
-import { parseConfig, questionsForHook } from "../src/config-schema.js";
+import { loadConfig, parseConfig, questionsForHook, type AlterEgoConfig } from "../src/config.js";
 import { freeze } from "./helpers.js";
 
 const sampleQuestions = {
   custom_check: { type: "noul", instructions: "A custom question" },
   category: {
-    type: "choice",
-    instructions: { question: "Which category?" },
+    type: "choice", instructions: { question: "Which category?" },
     criteria: { a: null, b: ["Category B"] },
   },
   level: {
-    type: "score",
-    instructions: ["Rate the level"],
+    type: "score", instructions: ["Rate the level"],
     criteria: ["Low", { description: "High" }],
   },
 };
-
 const dirs: string[] = [];
 
 beforeEach(() => {
   vi.stubEnv("TYPESAFE_API_KEY", undefined);
 });
-
 afterEach(() => {
   vi.unstubAllEnvs();
-  for (const dir of dirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), "alter-ego-config-"));
   dirs.push(root);
-
   const cwd = join(root, "project");
   const agentDir = join(root, "agent");
   mkdirSync(join(cwd, ".pi"), { recursive: true });
   mkdirSync(agentDir);
   vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
-
   const projectPath = join(cwd, ".pi", "alter-ego.json");
   const globalPath = join(agentDir, "alter-ego.json");
-
   return {
-    load: () => loadConfig(cwd),
-    projectPath,
-    globalPath,
+    load: () => loadConfig(cwd), projectPath, globalPath,
     project: (value: unknown) => writeFileSync(projectPath, JSON.stringify(value)),
     global: (value: unknown) => writeFileSync(globalPath, JSON.stringify(value)),
   };
@@ -58,13 +46,10 @@ function setup() {
 describe("pure configuration", () => {
   it("parses supplied text using explicit credentials, not the filesystem or environment", () => {
     const text = JSON.stringify({ questions: sampleQuestions });
-    const expected = { ok: true, value: { questions: sampleQuestions, apiKey: "explicit-key" } };
-    expect(parseConfig(text, "/synthetic/config.json", "explicit-key")).toEqual(expected);
+    const expected = { questions: sampleQuestions, apiKey: "explicit-key" };
+    expect(parseConfig(text, "explicit-key")).toEqual(expected);
     vi.stubEnv("TYPESAFE_API_KEY", "ambient-key");
-    expect(parseConfig(text, "/synthetic/config.json", "explicit-key")).toEqual(expected);
-    expect(parseConfig("{", "/synthetic/config.json", "explicit-key")).toEqual({
-      ok: false, error: "/synthetic/config.json: JSONが不正です（未評価）",
-    });
+    expect(parseConfig(text, "explicit-key")).toEqual(expected);
   });
 
   it("routes frozen questions without removing their routing metadata in place", () => {
@@ -80,47 +65,29 @@ describe("pure configuration", () => {
 
 describe("Alter Ego configuration", () => {
   it("has no built-in questions or credentials", () => {
-    expect(setup().load()).toEqual({ ok: true, value: { questions: {}, apiKey: undefined } });
+    expect(setup().load()).toEqual({ questions: {}, apiKey: undefined });
   });
 
   it("uses a project's questions as a whole, without adding global questions or defaults", () => {
     const config = setup();
     config.global({ questions: sampleQuestions });
-    expect(config.load()).toMatchObject({ ok: true, value: { questions: sampleQuestions } });
-    const questions = {
-      custom_check: { type: "noul", instructions: "A custom question" },
-    };
+    expect(config.load()).toEqual({ questions: sampleQuestions, apiKey: undefined });
+    const questions = { custom_check: sampleQuestions.custom_check };
     config.project({ questions });
-    expect(config.load()).toEqual({ ok: true, value: { questions, apiKey: undefined } });
+    expect(config.load()).toEqual({ questions, apiKey: undefined });
     config.project({ questions: {} });
-    expect(config.load()).toEqual({ ok: true, value: { questions: {}, apiKey: undefined } });
+    expect(config.load()).toEqual({ questions: {}, apiKey: undefined });
   });
 
-  it("passes arbitrary IDs, all primitive types, and structured JSON through unchanged", () => {
+  it("passes arbitrary question content through without local schema validation", () => {
     const config = setup();
     const questions = {
       ...sampleQuestions,
       language: { type: "noul", instructions: null },
-      custom_source: {
-        type: "choice",
-        instructions: "Pick",
-        criteria: { first: null, second: ["Option two"] },
-      },
+      anything: { type: "future-type", arbitrary: { field: [1, true, null] } },
     };
     config.project({ questions });
-    expect(config.load()).toEqual({ ok: true, value: { questions, apiKey: undefined } });
-  });
-
-  it("leaves question validation to TypeSafe rather than imposing an application schema", () => {
-    const config = setup();
-    const questions = {
-      anything: {
-        type: "future-type",
-        arbitrary: { field: [1, true, null] },
-      },
-    };
-    config.project({ questions });
-    expect(config.load()).toEqual({ ok: true, value: { questions, apiKey: undefined } });
+    expect(config.load()).toEqual({ questions, apiKey: undefined });
   });
 
   it("routes and batches by Pi hook names, defaults to agent_end, and strips only routing metadata", () => {
@@ -133,83 +100,51 @@ describe("Alter Ego configuration", () => {
     };
     config.project({ questions });
     const loaded = config.load();
-    expect(loaded).toEqual({ ok: true, value: { questions, apiKey: undefined } });
-    if (!loaded.ok) throw new Error(loaded.error);
-    expect(questionsForHook(loaded.value.questions, "tool_call")).toEqual({
+    expect(loaded).toEqual({ questions, apiKey: undefined });
+    expect(questionsForHook(loaded.questions, "tool_call")).toEqual({
       before_tool: { type: "noul", instructions: "Safe tool call?" },
       multiple: sampleQuestions.category,
       ...JSON.parse('{"__proto__":{"type":"noul","instructions":{"on":"This is question content"}}}'),
     });
-    expect(questionsForHook(loaded.value.questions, "agent_end")).toEqual({
-      legacy: questions.legacy, multiple: sampleQuestions.category,
-    });
-    expect(questionsForHook(loaded.value.questions, "input")).toEqual({});
-    expect(loaded.value.questions).toEqual(questions);
+    expect(questionsForHook(loaded.questions, "agent_end")).toEqual({ legacy: questions.legacy, multiple: sampleQuestions.category });
+    expect(questionsForHook(loaded.questions, "input")).toEqual({});
+    expect(loaded.questions).toEqual(questions);
   });
 
-  it.each(["unknown_hook", "message_update", "before_provider_request", "", [], ["tool_call", "typo"], [1], null, false, {}].map((on) => ({ on })))(
-    "rejects invalid or unsupported on values without falling back: $on",
-    ({ on }) => {
-      const config = setup();
-      config.global({ questions: sampleQuestions });
-      config.project({ questions: { check: { type: "noul", instructions: "Check", on } } });
-      expect(config.load()).toEqual({
-        ok: false,
-        error: expect.stringContaining(`${config.projectPath}: questions.check.on`),
-      });
-    },
-  );
-
-  it.each([[], "invalid", 1, { invalid: null }].map((questions) => ({ questions })))("rejects non-object question maps or entries: $questions", ({ questions }) => {
+  it("does not reroute an unknown hook to agent_end", () => {
     const config = setup();
-    config.project({ questions });
-    expect(config.load()).toEqual({ ok: false, error: expect.stringContaining("JSONオブジェクト") });
+    config.project({ questions: { check: { type: "noul", instructions: "Check", on: "unknown_hook" } } });
+    expect(questionsForHook(config.load().questions, "agent_end")).toEqual({});
   });
 
   it("reloads file and environment changes and ignores unrelated settings", () => {
     const config = setup();
     config.project({ model: "old-model", timeout: 0, apiKey: "ignored-file-key" });
-    expect(config.load()).toEqual({ ok: true, value: { questions: {}, apiKey: undefined } });
+    expect(config.load()).toEqual({ questions: {}, apiKey: undefined });
     vi.stubEnv("TYPESAFE_API_KEY", "first-key");
     config.project({ model: "other", state: "ignored", questions: sampleQuestions });
-    expect(config.load()).toEqual({ ok: true, value: { questions: sampleQuestions, apiKey: "first-key" } });
+    expect(config.load()).toEqual({ questions: sampleQuestions, apiKey: "first-key" });
     vi.stubEnv("TYPESAFE_API_KEY", "updated-key");
     config.project({ questions: {} });
-    expect(config.load()).toEqual({ ok: true, value: { questions: {}, apiKey: "updated-key" } });
-    vi.stubEnv("TYPESAFE_API_KEY", undefined);
-    expect(config.load()).toEqual({ ok: true, value: { questions: {}, apiKey: undefined } });
+    expect(config.load()).toEqual({ questions: {}, apiKey: "updated-key" });
   });
 
   it("does not read an overridden global file", () => {
     const config = setup();
     writeFileSync(config.globalPath, "{bad JSON");
     config.project({ questions: sampleQuestions });
-    expect(config.load()).toMatchObject({ ok: true, value: { questions: sampleQuestions } });
+    expect(config.load()).toEqual({ questions: sampleQuestions, apiKey: undefined });
   });
 
-  it("returns malformed JSON and file read failures without using another configuration", () => {
+  it("propagates native JSON and read errors rather than returning a Result or another configuration", () => {
     const config = setup();
     config.global({ questions: sampleQuestions });
     writeFileSync(config.projectPath, "{invalid JSON");
-    expect(config.load()).toEqual({ ok: false, error: `${config.projectPath}: JSONが不正です（未評価）` });
+    expect(config.load).toThrow(SyntaxError);
+    writeFileSync(config.projectPath, "");
+    expect(config.load).toThrow(SyntaxError);
     rmSync(config.projectPath);
     mkdirSync(config.projectPath);
-    expect(config.load()).toEqual({
-      ok: false,
-      error: `${config.projectPath}: 質問設定を読み取れません（未評価）`,
-    });
+    expect(config.load).toThrow();
   });
-
-  it.each([{ value: null }, { value: [] }, { value: false }, { value: "legacy" }])(
-    "returns a failure for a non-object configuration: $value",
-    ({ value }) => {
-      const config = setup();
-      config.global({ questions: sampleQuestions });
-      config.project(value);
-      expect(config.load()).toEqual({
-        ok: false,
-        error: `${config.projectPath}: 設定はJSONオブジェクトで指定してください（未評価）`,
-      });
-    },
-  );
 });

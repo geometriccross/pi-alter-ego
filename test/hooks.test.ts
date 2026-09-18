@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { prepareHookRequest, type HookEvent } from "../src/hooks.js";
-import type { JevRequest } from "../src/jev.js";
+import { prepareRequest, type QuestionEvent, type JevRequest } from "../src/evaluation.js";
 import { freeze } from "./helpers.js";
 
 const questions: JevRequest["questions"] = {
@@ -37,10 +36,10 @@ describe("hook state snapshots", () => {
 
     const event = freeze({
       type: "turn_end", turnIndex: 0, message: structuredClone(assistant), toolResults: [toolResult],
-    } as HookEvent);
+    } as QuestionEvent);
     const entries = freeze(manager.getEntries());
-    const request = prepareHookRequest(event, entries, leafId, freeze(questions));
-    expect(prepareHookRequest(event, entries, leafId, questions)).toEqual(request);
+    const request = prepareRequest(event, entries, leafId, freeze(questions));
+    expect(prepareRequest(event, entries, leafId, questions)).toEqual(request);
     expect(request?.state).toEqual({
       event: {
         type: "turn_end", turnIndex: 0,
@@ -56,7 +55,7 @@ describe("hook state snapshots", () => {
   it("uses an incoming user message before persistence without borrowing the previous run's trace", () => {
     const { manager } = session();
     manager.appendMessage(assistant as any);
-    const request = prepareHookRequest({
+    const request = prepareRequest({
       type: "message_end", message: { role: "user", content: "Next request", timestamp: 4 },
     }, manager.getEntries(), manager.getLeafId(), questions);
     expect(request?.state).toMatchObject({
@@ -67,7 +66,7 @@ describe("hook state snapshots", () => {
 
   it("uses context event messages rather than older session messages and excludes non-text metadata", () => {
     const { manager } = session();
-    const request = prepareHookRequest({
+    const request = prepareRequest({
       type: "context",
       messages: [
         { ...user, content: [{ type: "text", text: "Transformed request" }, { type: "image", data: "image", mimeType: "image/png" }] },
@@ -75,7 +74,7 @@ describe("hook state snapshots", () => {
         { ...toolResult, details: { secret: "private metadata" } },
         { role: "custom", customType: "alter-ego", content: "Earlier judgment" },
       ],
-    } as HookEvent, manager.getEntries(), manager.getLeafId(), questions);
+    } as QuestionEvent, manager.getEntries(), manager.getLeafId(), questions);
     expect(request?.state).toEqual({
       event: {
         type: "context",
