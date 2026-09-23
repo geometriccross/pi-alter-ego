@@ -76,6 +76,20 @@ export type QuestionEvent = Extract<ExtensionEvent, { type: QuestionHook }>;
 type HookEvent = Exclude<QuestionEvent, { type: "agent_end" }>;
 type Message = Extract<ExtensionEvent, { type: "message_end" }>["message"];
 
+/**
+ * Pi のイベントと可視の文脈を、Jev が質問を判断するための state に組み立てる。
+ * 通信は行わず、入力も変更しない。agent_end では当該実行の Assistant Trace、
+ * その他では現在の文脈の最新ユーザー入力以降を使い、入力・実行開始時の Trace は空にする。
+ * イベント情報は必要な項目だけを選ぶが、ツール引数やテキスト中の秘密情報をマスクする処理ではない。
+ *
+ * @param event 評価の契機となったイベント。未保存のメッセージや当該実行の回答もここから取得する。
+ * @param entries SessionManager.getEntries() のスナップショット。選択ブランチの文脈と圧縮要約を復元する材料。
+ * @param leafId entries 内の現在位置を示す getLeafId() の値。他ブランチを混ぜず、null なら履歴の文脈は空にする。
+ * @param questions questionsForHook で今回のイベント向けに選択済みの、on を含まない質問集合。
+ * @param prompt 直前の before_agent_start で保持した展開済み入力。入力を持たない agent_start でのみ使い、未指定なら空文字。
+ * @returns askJev に渡すリクエスト。質問なし、agent_end の回答が Dissentable でない場合、
+ * または message_end が user / assistant / toolResult 以外の場合は、通信を省略するための null。
+ */
 export function prepareRequest(
   event: QuestionEvent,
   entries: readonly SessionEntry[],
@@ -246,6 +260,13 @@ function extractCompactionSummaries(sessionContext: unknown): string[] {
   });
 }
 
+/**
+ * 評価用データを TypeSafe の HTTP API 用に直列化し、使用モデルを jev-latest に固定する。
+ *
+ * @param request prepareRequest などで用意した、JSON 化可能な state と質問集合。認証情報は含めない。
+ * @returns askJev が fetch の body に指定する JSON 文字列。state と質問の内容は加工しない。
+ * @throws 循環参照などによる JSON 直列化エラー。
+ */
 export function prepareJevRequest(request: JevRequest): string {
   return JSON.stringify({ model: "jev-latest", state: request.state, questions: request.questions });
 }
@@ -257,6 +278,19 @@ export interface JevOptions {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * 1つの state に対する質問集合を Jev に1回送信し、型付き判断を受け取る通信境界。
+ * 再試行・独自タイムアウト・別モデルへのフォールバックは行わず、応答のスキーマ検証も追加しない。
+ *
+ * @param request prepareRequest などで用意した評価対象と質問。prepareJevRequest で送信本文にする。
+ * @param options apiKey は Bearer 認証用（前後の空白を除去）。未設定でもローカルで拒否せず API に委ねる。
+ * signal は Pi の ctx.signal など、呼び出し元のキャンセルを fetch へそのまま伝えるためのもの。
+ * @param fetchImpl テストで実通信を置き換えるための注入点。通常は globalThis.fetch を使う。
+ * @returns buildDissentMessage または buildHookNotification に渡す応答。
+ * JSON を JevResponse としてそのまま返し、判断の再解釈や自由文生成はしない。
+ * @throws HTTP 失敗はステータスのみを含むエラーにし、応答本文は露出させない。
+ * 直列化・通信・キャンセル・JSON 解析などの失敗も呼び出し元へ伝播する。
+ */
 export async function askJev(
   request: JevRequest,
   options: JevOptions,

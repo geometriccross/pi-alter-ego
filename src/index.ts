@@ -3,8 +3,15 @@ import { loadConfig, questionsForHook } from "./config.js";
 import { askJev, prepareRequest, type QuestionEvent } from "./evaluation.js";
 import { buildDissentMessage, buildHookNotification, formatEnabledStatus, renderAlterEgoMessage } from "./output.js";
 
+/**
+ * セッション再開やツリー移動の後に、そのブランチでの Alter Ego の ON/OFF を復元する。
+ * 他の拡張の記録や不正な値を無視し、最後の有効な alter-ego-toggle だけを採用する。
+ *
+ * @param branch SessionManager.getBranch() が返す、ルートから現在の葉までの順序付き履歴。
+ * 全ブランチのエントリではなく、復元対象の経路だけを渡す。
+ * @returns 拡張の評価可否と formatEnabledStatus による表示に使う有効状態。記録がなければ true。
+ */
 export function restoreEnabled(branch: readonly SessionEntry[]): boolean {
-  // SessionManager.getBranch() is ordered root -> leaf.
   return branch.flatMap((entry) => {
     if (entry.type !== "custom" || entry.customType !== "alter-ego-toggle") return [];
     const enabled = (entry.data as { enabled?: unknown } | undefined)?.enabled;
@@ -12,6 +19,13 @@ export function restoreEnabled(branch: readonly SessionEntry[]): boolean {
   }).at(-1) ?? true;
 }
 
+/**
+ * Pi が読み込む拡張の入口。評価フック、ON/OFF コマンド、状態復元、メッセージ描画を接続する。
+ * 初期化時には通信せず、後続のフックで UI が利用可能かつ有効な場合に設定を読み、Jev の判断を表示する。
+ *
+ * @param pi Pi の拡張ローダーから渡される API。ハンドラ登録、切替状態の保存、最終評価メッセージの送信に使う。
+ * @returns 戻り値はない。登録したハンドラと renderAlterEgoMessage を Pi が後から呼び出す。
+ */
 export default function alterEgoExtension(pi: ExtensionAPI) {
   let enabled = true;
   let prompt: string | undefined;
